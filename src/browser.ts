@@ -319,8 +319,13 @@ function showSound(num: number) {
     b.copyToChannel(pcm, 0);
     const src = audio.createBufferSource();
     src.buffer = b;
+    // Normalise to just under full scale.  A fixed gain clips the loud
+    // passages of a busy track, which is heard as static rather than as
+    // loudness.
+    let pk = 0;
+    for (const v of pcm) pk = Math.max(pk, Math.abs(v));
     const gain = audio.createGain();
-    gain.gain.value = 3;
+    gain.gain.value = pk > 0 ? Math.min(6, 0.89 / pk) : 1;
     src.connect(gain).connect(audio.destination);
     src.onended = () => { if (playing === src) { playing = null; play.textContent = 'play'; } };
     src.start();

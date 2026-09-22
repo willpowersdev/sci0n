@@ -79,6 +79,17 @@ These are deliberate and stated rather than hidden:
   in without re-reading anything.
 - **The EG-type bit is not reliably located**, so notes are held for the duration the
   score writes. Genuinely percussive patches ring longer than they should.
+- **Percussion is a dedicated synth, not OPL2 rhythm mode.** Channel 9 carries General
+  MIDI percussion — pooled over a game its notes are hi-hat, kick, snare, tambourine
+  and cymbals — and each drum is synthesised from a swept tone plus a noise burst.
+  The AdLib driver used the chip's rhythm channels for these; the timbres here are
+  tuned rather than decoded.
+- **Melodic programs are not General MIDI.** They index the game's own AdLib bank:
+  the numbers used run 0..95 against a 96-instrument bank, and LSL2's 48-instrument
+  bank is never asked for anything above 42. Program 127 means no instrument. Only
+  the drum channel follows a General MIDI map.
+- **KQ4 has no patch resource**, so it plays drums but no melody — its instrument
+  definitions live inside `adl.drv`, which is not read.
 - **SCI01 sound is not decoded** (QFG2). It uses a multi-track header; the viewer
   says so rather than guessing.
 - **Storage is 32-bit where SCI is 16-bit.** Object references are script-tagged and

@@ -10,6 +10,7 @@
  * together rather than scheduling anything.
  */
 import { OPL2, noteToFreq, OPL_RATE } from './opl2.ts';
+import { PercussionVoice, DRUM_CHANNEL } from './percussion.ts';
 import { applyOp, type Instrument } from './patch.ts';
 import { DEVICE_ADLIB, type Sound } from '../sound.ts';
 
@@ -17,14 +18,26 @@ export const TICKS_PER_SECOND = 60;
 
 interface Voice { channel: number; note: number; midi: number; age: number }
 
+/**
+ * Chip channels kept for melody.  The hardware's rhythm mode took the
+ * last three channels for percussion, and the same split keeps a busy
+ * drum part from evicting the tune.
+ */
+const MELODIC_VOICES = 6;
+/** Simultaneous drum hits; beyond this the quietest is replaced. */
+const DRUM_VOICES = 6;
+/** The program number that means "this channel has no instrument". */
+const NO_INSTRUMENT = 127;
+
 export class Player {
   opl = new OPL2();
   private bank: Instrument[];
   private voices: Voice[] = [];
-  private program = new Int16Array(16);
+  private program = new Int16Array(16).fill(NO_INSTRUMENT);
   private bend = new Float32Array(16);
   private volume = new Float32Array(16).fill(1);
   private clock = 0;
+  private drums: PercussionVoice[] = Array.from({ length: DRUM_VOICES }, () => new PercussionVoice());
   /** Which of the music's channels this arrangement should sound. */
   private enabled: boolean[];
 
@@ -41,23 +54,49 @@ export class Player {
     this.enabled = Array.from({ length: 16 }, (_, i) => any ? (marked[i] ?? false) : true);
   }
 
+  /**
+   * Find a chip channel for a note.
+   *
+   * These scores ask for up to twenty-five simultaneous notes on a chip
+   * with nine, so stealing is constant and the choice matters.  Taking
+   * the oldest voice cuts notes that are still at full volume, and each
+   * cut is a step in the waveform -- a click.  Thousands of those are
+   * heard as static, so the quietest voice goes first, which is usually
+   * one already fading out.
+   */
   private alloc(midi: number, note: number): Voice {
-    let v = this.voices.find(x => x.midi < 0);
+    let v = this.voices.find(x => x.midi < 0 && !this.opl.channels[x.channel].active);
+    if (!v && this.voices.length < MELODIC_VOICES) {
+      v = { channel: this.voices.length, note, midi, age: this.clock };
+      this.voices.push(v);
+    }
     if (!v) {
-      if (this.voices.length < 9) {
-        v = { channel: this.voices.length, note, midi, age: this.clock };
-        this.voices.push(v);
-      } else {
-        v = this.voices.reduce((a, b) => (a.age <= b.age ? a : b));
-        this.opl.channels[v.channel].keyOff();
-      }
+      v = this.voices.reduce((a, b) =>
+        this.opl.channels[a.channel].loudness <= this.opl.channels[b.channel].loudness ? a : b);
+      this.opl.channels[v.channel].keyOff();
     }
     v.note = note; v.midi = midi; v.age = this.clock++;
     return v;
   }
 
   private noteOn(midi: number, note: number, velocity: number) {
-    const inst = this.bank[this.program[midi] % Math.max(1, this.bank.length)];
+    if (midi === DRUM_CHANNEL) {
+      // A drum is struck, never held: it needs no note-off and no voice
+      // of its own beyond its decay.
+      const free = this.drums.find(d => !d.active) ?? this.drums[0];
+      free.strike(note, velocity * this.volume[midi]);
+      return;
+    }
+    // Programs index this game's own AdLib bank, not General MIDI: the
+    // numbers used run 0..95 against a 96-instrument bank, and LSL2's
+    // 48-instrument bank is never asked for anything above 42.  Only the
+    // drum channel follows a General MIDI map.  127 means no instrument
+    // -- it is set constantly and almost never has notes under it -- and
+    // an out-of-range program is left silent rather than wrapped, since
+    // wrapping plays a real but wrong instrument.
+    const prog = this.program[midi];
+    if (prog === NO_INSTRUMENT || prog < 0 || prog >= this.bank.length) return;
+    const inst = this.bank[prog];
     if (!inst) return;
     const v = this.alloc(midi, note);
     const ch = this.opl.channels[v.channel];
@@ -81,6 +120,7 @@ export class Player {
   }
 
   private noteOff(midi: number, note: number) {
+    if (midi === DRUM_CHANNEL) return;      // drums ring out on their own
     for (const v of this.voices) {
       if (v.midi !== midi || v.note !== note) continue;
       this.opl.channels[v.channel].keyOff();
@@ -133,7 +173,9 @@ export class Player {
         this.event(ev[i].status, ev[i].a, ev[i].b);
         i++;
       }
-      out[s] = this.opl.sample();
+      let v = this.opl.rawSample();
+      for (const d of this.drums) v += d.sample(OPL_RATE) * 2.2;
+      out[s] = Math.tanh(v / 3.2);
     }
     return out;
   }

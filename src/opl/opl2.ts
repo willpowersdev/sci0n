@@ -117,6 +117,8 @@ export class Channel {
 
   keyOn() { this.keyed = true; this.op0.keyOn(); this.op1.keyOn(); }
   keyOff() { this.keyed = false; this.op0.keyOff(); this.op1.keyOff(); }
+  /** How loud this channel currently is, for deciding what to steal. */
+  get loudness() { return this.op1.env === Env.Off ? 0 : 1 - this.op1.atten / 511; }
   get active() { return this.op1.env !== Env.Off || (this.additive && this.op0.env !== Env.Off); }
 
   sample(): number {
@@ -130,8 +132,13 @@ export class Channel {
     const m0 = this.op0.mult === 0 ? 0.5 : this.op0.mult;
     const m1 = this.op1.mult === 0 ? 0.5 : this.op1.mult;
 
+    // Feedback modulates phase by a fraction of a period: the chip's
+    // strongest setting is about half a turn, and the steps below it
+    // halve.  Scaling it so that 7 meant eight whole turns -- as a /16
+    // denominator does -- makes every instrument with feedback come out
+    // as broadband noise, which is most of the bank.
     const fb = this.feedback ? ((this.op0.out + this.op0.prev) / 2) *
-                               Math.pow(2, this.feedback) / 16 : 0;
+                               Math.pow(2, this.feedback) / 256 : 0;
     this.op0.prev = this.op0.out;
     this.op0.phase += this.hz(m0) / OPL_RATE;
     this.op0.out = wave(this.op0.wave, this.op0.phase + fb) * this.op0.gain(kslDb);
@@ -150,11 +157,25 @@ export class Channel {
 export class OPL2 {
   channels: Channel[] = Array.from({ length: 9 }, () => new Channel());
 
-  /** One sample, summed over the nine channels and kept inside [-1, 1]. */
+  /**
+   * One sample, summed over the nine channels.
+   *
+   * The sum is soft-limited rather than clamped.  Nine voices regularly
+   * exceed full scale together, and a hard clamp turns every one of
+   * those moments into a burst of harmonics -- which is heard as static
+   * on the loud passages, exactly where the music is busiest.
+   */
   sample(): number {
     let v = 0;
     for (const c of this.channels) v += c.sample();
-    return Math.max(-1, Math.min(1, v / 4));
+    return Math.tanh(v / 3.2);
+  }
+
+  /** The nine channels' raw sum, for a caller doing its own mixing. */
+  rawSample(): number {
+    let v = 0;
+    for (const c of this.channels) v += c.sample();
+    return v;
   }
 
   render(n: number, out = new Float32Array(n)): Float32Array {
