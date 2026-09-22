@@ -90,6 +90,7 @@ These are deliberate and stated rather than hidden:
 
 ## Licence
 
-None yet — all rights reserved by default. Open an issue if you want one added.
+[MIT](LICENSE) — © 2026 Will Powers.
 
-Sierra's games and their data are not covered by this repository in any case.
+This covers the code in this repository only. Sierra's games, their resources and
+their data are not covered by it and are not distributed here.
