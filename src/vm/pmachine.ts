@@ -186,6 +186,18 @@ export class PMachine {
   private textRes = new Map<number, string[]>();
   /** Where Display leaves the caret, and what it last drew with. */
   private dsFont = 0;
+  /**
+   * Ports.  A window makes its own the active one, and everything drawn
+   * afterwards is placed relative to it -- which is why a control's tiny
+   * `ns` rectangle lands inside the dialog rather than at the top-left
+   * of the screen.
+   */
+  private ports: Array<{ x: number; y: number; w: number; h: number }> =
+    [{ x: 0, y: 0, w: WIDTH, h: HEIGHT }];
+  private windows = new Map<number, {
+    rect: { x0: number; y0: number; w: number; h: number; buf: Uint8Array };
+    port: { x: number; y: number; w: number; h: number };
+  }>();
 
   constructor(game: Game, index?: Index) {
     this.game = game;
@@ -969,16 +981,31 @@ export class PMachine {
         this.screen.status = this.stringAt(a0);
         return 0;
       }
+      /**
+       * TextSize(rect, text, font, maxWidth).
+       *
+       * The result goes *into* the caller's rectangle, four words of it,
+       * not into the return value.  A dialog sizes itself from what this
+       * writes, so returning the measurement instead leaves every window
+       * eight pixels wide with its text outside it.
+       */
       case 'TextSize': {
-        // TextSize(rect, text, font, maxWidth): report the pixel size.
-        const f = this.font(args[2] ?? 0);
+        const f = this.font(args[2] ?? 0) ?? this.font(0);
         const t = this.stringAt(a1);
-        let w = 0, h = 8;
-        if (f) { for (const ch of t) { const g = f.chars[ch.charCodeAt(0)]; if (g) { w += g.width; h = Math.max(h, g.height); } } }
-        const rect = this.resolveTarget(null, a0);
-        if (rect) { /* the rect is a raw array in script memory; size is
-                       reported through the return value instead */ }
-        return (h << 16) | (w & 0xFFFF);
+        const maxW = (args[3] ?? 0) > 0 ? args[3] : WIDTH;
+        let w = 0, h = f ? Math.max(8, f.lineHeight) : 8, line = 0;
+        if (f) {
+          for (const ch of t) {
+            if (ch === '\n') { w = Math.max(w, line); line = 0; h += Math.max(8, f.lineHeight); continue; }
+            const g = f.chars[ch.charCodeAt(0)];
+            if (!g) continue;
+            if (line + g.width > maxW) { w = Math.max(w, line); line = 0; h += Math.max(8, f.lineHeight); }
+            line += g.width;
+          }
+          w = Math.max(w, line);
+        }
+        this.writeWords(a0, [0, 0, h, w]);
+        return 0;
       }
 
       // --- things that only need to not fail -----------------------------
@@ -1007,11 +1034,85 @@ export class PMachine {
         return t.charCodeAt(a1) || 0;
       }
 
+      /**
+       * NewWindow(top, left, bottom, right, title, type, priority, fg, bg).
+       *
+       * The rectangle comes first and the games pass it in that order --
+       * a window at (144, 156, 156, 164) is twelve rows tall and eight
+       * wide, which is what an empty dialog is before its text sizes it.
+       */
+      case 'NewWindow': {
+        const top = a0, left = a1, bottom = args[2] ?? a0, right = args[3] ?? a1;
+        const bg = args[8] ?? 15;
+        const x0 = Math.max(0, left - 1), y0 = Math.max(0, top - 1);
+        const x1 = Math.min(WIDTH, right + 2), y1 = Math.min(HEIGHT, bottom + 2);
+        const saved = this.screen.save(x0, y0, x1, y1);
+        this.screen.fill(x0, y0, x1, y1, bg & 0x0F);
+        this.screen.frame(x0, y0, x1, y1, 0);
+        const port = { x: left, y: top, w: Math.max(1, right - left), h: Math.max(1, bottom - top) };
+        const h = this.alloc();
+        this.windows.set(h, { rect: saved, port });
+        this.ports.push(port);
+        return h;
+      }
+      case 'DisposeWindow': {
+        const w = this.windows.get(a0);
+        if (w) {
+          this.screen.restoreRect(w.rect);
+          this.windows.delete(a0);
+          const i = this.ports.lastIndexOf(w.port);
+          if (i > 0) this.ports.splice(i, 1);
+        }
+        return 0;
+      }
+      case 'SetPort': {
+        const w = this.windows.get(a0);
+        if (w) { const i = this.ports.lastIndexOf(w.port); if (i < 0) this.ports.push(w.port); }
+        else if (a0 === 0) this.ports.length = 1;
+        return 0;
+      }
+
+      /**
+       * DrawControl(control).
+       *
+       * The dialogs are built out of these: type 2 is a line of text,
+       * type 3 an edit field, type 0 and 1 buttons.  Their rectangles are
+       * relative to the window's port, and `state` bit 0 means selected,
+       * which is drawn inverted.
+       */
+      case 'DrawControl': case 'HiliteControl': {
+        const o = this.resolveTarget(null, a0);
+        if (!o) return 0;
+        const p = this.port;
+        const x = p.x + this.prop(o, 'nsLeft');
+        const y = p.y + this.prop(o, 'nsTop');
+        const w = Math.max(0, this.prop(o, 'nsRight') - this.prop(o, 'nsLeft'));
+        const type = this.prop(o, 'type');
+        const state = this.prop(o, 'state');
+        const text = this.stringAt(this.prop(o, 'text'));
+        const font = this.font(this.prop(o, 'font')) ?? this.font(0);
+        const selected = (state & 1) !== 0;
+        if (type === 0 || type === 1) {
+          const bottom = p.y + this.prop(o, 'nsBottom');
+          if (selected) this.screen.fill(x, y, x + w + 2, bottom + 2, 0);
+          this.screen.frame(x - 1, y - 1, x + w + 3, bottom + 3, 0);
+          if (font && text) this.screen.text(font, text, x + 1, y, selected ? 15 : 0);
+        } else if (type === 3) {
+          // An edit field shows what has been typed, with a caret.
+          if (font) {
+            const drawn = font ? this.screen.text(font, text, x, y, 0) : 0;
+            this.screen.fill(x + drawn, y, x + drawn + 1, y + 8, 0);
+          }
+        } else if (font && text) {
+          this.drawText(font, text, x, y, 0, Math.max(8, w || (WIDTH - x)));
+        }
+        return 0;
+      }
+
       case 'DisposeScript': case 'FlushResources': case 'MemoryInfo':
       case 'SetMenu': case 'AddMenu': case 'DrawMenuBar': case 'SetSynonyms':
-      case 'GetSaveDir': case 'GetCWD': case 'DoSound': case 'NewWindow':
-      case 'DisposeWindow': case 'DrawControl': case 'EditControl':
-      case 'HiliteControl': case 'FileIO':
+      case 'GetSaveDir': case 'GetCWD': case 'DoSound':
+      case 'EditControl': case 'FileIO':
       case 'FOpen': case 'FClose': case 'FGets': case 'FPuts':
         return 0;
 
@@ -1176,7 +1277,8 @@ export class PMachine {
     const font = this.font(this.dsFont) ?? this.font(0);
     if (!font) return 0;
     if (!haveXY) { x = 0; y = 0; }
-    this.drawText(font, text, x, y, fg, Math.min(width, WIDTH - x));
+    const p = this.port;
+    this.drawText(font, text, p.x + x, p.y + y, fg, Math.min(width, WIDTH - p.x - x));
     return 0;
   }
 
@@ -1225,6 +1327,8 @@ export class PMachine {
     return out;
   }
 
+  private get port() { return this.ports[this.ports.length - 1]; }
+
   /** Lines of a text resource, cached. */
   textLines(n: number): string[] {
     let l = this.textRes.get(n);
@@ -1234,6 +1338,26 @@ export class PMachine {
       this.textRes.set(n, l);
     }
     return l;
+  }
+
+  /**
+   * Write words into an array a script owns.
+   *
+   * Several kernels report by filling a caller-supplied rectangle rather
+   * than by returning, so the machine has to be able to write back into
+   * script memory, not only read from it.
+   */
+  writeWords(ref: number, values: number[]) {
+    const scriptNo = isRef(ref) ? refScript(ref) : 0;
+    const off = isRef(ref) ? refOffset(ref) : ref;
+    const sc = this.script(scriptNo);
+    if (!sc || off <= 0) return;
+    for (let i = 0; i < values.length; i++) {
+      const p = off + i * 2;
+      if (p + 1 >= sc.data.length) return;
+      sc.data[p] = values[i] & 0xFF;
+      sc.data[p + 1] = (values[i] >> 8) & 0xFF;
+    }
   }
 
   /** Put a string on the kernel's heap and return its handle. */

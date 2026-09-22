@@ -105,6 +105,23 @@ export class Screen {
     return cx - x;
   }
 
+  /** Copy a rectangle out, so a window can put back what it covered. */
+  save(x0: number, y0: number, x1: number, y1: number) {
+    x0 = Math.max(0, x0); y0 = Math.max(0, y0);
+    x1 = Math.min(WIDTH, x1); y1 = Math.min(HEIGHT, y1);
+    const w = Math.max(0, x1 - x0), h = Math.max(0, y1 - y0);
+    const buf = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++)
+      buf.set(this.visual.subarray((y0 + y) * WIDTH + x0, (y0 + y) * WIDTH + x1), y * w);
+    return { x0, y0, w, h, buf };
+  }
+
+  restoreRect(r: { x0: number; y0: number; w: number; h: number; buf: Uint8Array }) {
+    for (let y = 0; y < r.h; y++)
+      this.visual.set(r.buf.subarray(y * r.w, (y + 1) * r.w), (r.y0 + y) * WIDTH + r.x0);
+    this.dirty = true;
+  }
+
   fill(x0: number, y0: number, x1: number, y1: number, colour: number) {
     for (let y = Math.max(0, y0); y < Math.min(HEIGHT, y1); y++)
       for (let x = Math.max(0, x0); x < Math.min(WIDTH, x1); x++)
