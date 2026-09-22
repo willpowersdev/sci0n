@@ -35,6 +35,7 @@ import { Game, type ResourceSource } from '../src/resources.ts';
 import { Index } from '../src/script.ts';
 import { Session } from '../src/vm/session.ts';
 import { WIDTH, HEIGHT } from '../src/vm/screen.ts';
+import { SIGNAL_NO_BLOCK } from '../src/vm/pmachine.ts';
 import { ROOT } from './games.ts';
 
 const ENTER = 0x0D;
@@ -64,6 +65,13 @@ function nodeSource(dir: string): ResourceSource {
   return { names: () => files, read: (n) => new Uint8Array(readFileSync(join(dir, n))) };
 }
 
+/**
+ * The cast list the game last handed to `Animate`.
+ *
+ * There is no global to read it from, so it is taken as it goes past.
+ */
+let lastCast = 0;
+
 /** Boot a game and play through its opening, which waits on keys. */
 function warmed(name: string) {
   const g = new Game(nodeSource(join(ROOT, name)));
@@ -71,6 +79,13 @@ function warmed(name: string) {
   let clock = 0;
   s.now = () => clock;
   const step = () => { clock += 1000 / 60; return s.tick(); };
+  const idx = (s as any).index;
+  const animate = idx.kernel.indexOf('Animate');
+  const kernel = s.vm.kernel.bind(s.vm);
+  (s.vm as any).kernel = (id: number, args: number[], f: any) => {
+    if (id === animate) lastCast = args[0] ?? 0;
+    return kernel(id, args, f);
+  };
   let st = s.tick();
   for (let i = 0; i < 12_000 && st.running; i++) {
     if (i % 120 === 0) s.key(ENTER);
@@ -175,6 +190,39 @@ for (const name of ['SQ3', 'CAMELOT']) {
     if (!partly) failed++;
     console.log(`  ${legal} legal standing positions, ${partly} where scenery hides part of the ego` +
       `${partly ? '' : ' -- NOTHING OCCLUDES THE EGO'}`);
+
+    /**
+     * Do the other things in the room stand in the way?
+     *
+     * Actors stand on each other's base rectangles, and a member
+     * carrying the "ignore actors" bit is meant to be walked through --
+     * a doorway, typically.  Both halves are checked here, because
+     * blocking everything would satisfy the first on its own.
+     */
+    // An ego carrying the bit itself walks through everything on
+    // purpose, and SQ3's does; only Camelot's is stopped by furniture.
+    const egoIgnores = (vm.prop(ego, 'signal') & 0xFFFF & 0x4000) !== 0;
+    let blockers = 0, walkThrough = 0, wrong = 0;
+    for (const v of (vm as any).listValues(lastCast)) {
+      const m = vm.resolveTarget(null, v);
+      if (!m || m === ego) continue;
+      const exempt = (vm.prop(m, 'signal') & 0xFFFF & SIGNAL_NO_BLOCK) !== 0;
+      // Ask the collision check itself, not `legalAt`: standing where a
+      // thing is may also be refused by the control plane, and that
+      // would make this pass without the cast being consulted at all.
+      const at = (vm as any).baseRectOf(ego, vm.prop(m, 'x'), vm.prop(m, 'y'));
+      if (!at) continue;
+      const stopped = (vm as any).blockedByCast(ego, at.left, at.top, at.right, at.bottom, lastCast);
+      if (exempt || egoIgnores) { walkThrough++; if (stopped) wrong++; }
+      else { blockers++; if (!stopped) wrong++; }
+    }
+    checked += egoIgnores ? 1 : 2;
+    if (wrong) failed++;
+    if (!egoIgnores && !blockers) failed++;
+    console.log(`  ${blockers} cast members block the ego, ${walkThrough} are walked through` +
+      `${egoIgnores ? ' (this ego ignores actors, by its own signal)' : ''}` +
+      `${wrong ? ` -- ${wrong} BEHAVED THE WRONG WAY` : ''}` +
+      `${!egoIgnores && !blockers ? ' -- NOTHING BLOCKS THE EGO' : ''}`);
   }
 }
 console.log(`\n${checked - failed}/${checked} checks passed`);

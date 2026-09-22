@@ -88,6 +88,18 @@ const MAX_FRAMES = 1024;
  */
 export const SIGNAL_FIXED_PRIORITY = 0x10;
 
+/**
+ * Signal bits that say an actor is not there to be bumped into.
+ *
+ * 0x4000 is "ignore actors": `Act::canBeHere` skips the whole check when
+ * the mover carries it, which is what makes a doorway walkable --
+ * Camelot's `door` has it where its `armourStand` and `pouch` do not.
+ * The other two cover an actor whose view has been taken away and one
+ * the interpreter is not maintaining, neither of which is on the floor
+ * to stand on.
+ */
+export const SIGNAL_NO_BLOCK = 0x4000 | 0x0080 | 0x0004;
+
 export const EV = {
   null: 0x0000, mouseDown: 0x0001, mouseUp: 0x0002,
   keyboard: 0x0004, joystick: 0x0008, direction: 0x0040,
@@ -737,6 +749,53 @@ export class PMachine {
   }
 
   /**
+   * The strip of floor a cast member stands on.
+   *
+   * Worked out from where the member is now rather than read back from
+   * its `br` properties, which only the members that run a full `doit`
+   * keep up to date: SQ3's `motivator` sits at 183,169 carrying a base
+   * rectangle left over from the origin, and trusting that would put an
+   * invisible obstacle in the corner of the room and none where the
+   * thing actually is.
+   */
+  private baseRectOf(o: RtObject, atX?: number, atY?: number) {
+    const cel = this.celOf(o);
+    if (!cel) return null;
+    const x = atX ?? s16(u16(this.prop(o, 'x')));
+    const y = atY ?? s16(u16(this.prop(o, 'y')));
+    const r = this.celRect(cel, x, y, s16(u16(this.prop(o, 'z'))));
+    const step = Math.max(1, s16(u16(this.prop(o, 'yStep', 2))));
+    if (r.right <= r.left) return null;
+    return { left: r.left, right: r.right, top: y + 1 - step, bottom: y + 1 };
+  }
+
+  /**
+   * Would this actor's feet land on another cast member's?
+   *
+   * Actors stand on each other's base rectangles, not their pictures --
+   * two characters may overlap on screen while standing apart.  A
+   * member with the "ignore actors" bit is walked through on purpose,
+   * which is how doorways work: Camelot's `door` carries it, its
+   * `armourStand` and `pouch` do not.
+   */
+  private blockedByCast(o: RtObject, left: number, top: number,
+                        right: number, bottom: number, listH: number): boolean {
+    if (!listH) return false;
+    // An actor that ignores others is not stopped by them either.
+    if (u16(this.prop(o, 'signal')) & 0x4000) return false;
+    for (const v of this.listValues(listH)) {
+      const m = this.resolveTarget(null, v);
+      if (!m || m === o) continue;
+      const sig = u16(this.prop(m, 'signal'));
+      if (sig & SIGNAL_NO_BLOCK) continue;
+      const b = this.baseRectOf(m);
+      if (!b) continue;                               // no base to stand on
+      if (left < b.right && b.left < right && top < b.bottom && b.top < bottom) return true;
+    }
+    return false;
+  }
+
+  /**
    * Could this actor stand with its feet at (x, y)?
    *
    * The base rectangle is worked out for the position being considered
@@ -744,15 +803,13 @@ export class PMachine {
    * is taken.
    */
   private legalAt(o: RtObject, x: number, y: number): boolean {
+    const b = this.baseRectOf(o, x, y);
+    if (!b) return true;
+    if (b.left < 0 || b.right > WIDTH || b.top < 0 || b.bottom > HEIGHT) return false;
+    if (this.blockedByCast(o, b.left, b.top, b.right, b.bottom, this.cast)) return false;
     const illegal = u16(this.prop(o, 'illegalBits'));
-    const cel = this.celOf(o);
-    if (!cel) return true;
-    const r = this.celRect(cel, x, y, s16(u16(this.prop(o, 'z'))));
-    const step = Math.max(1, s16(u16(this.prop(o, 'yStep', 2))));
-    const top = y + 1 - step, bottom = y + 1;
-    if (r.left < 0 || r.right > WIDTH || top < 0 || bottom > HEIGHT) return false;
     if (!illegal) return true;
-    return (this.controlBits(r.left, top, r.right, bottom) & illegal) === 0;
+    return (this.controlBits(b.left, b.top, b.right, b.bottom) & illegal) === 0;
   }
 
   /**
@@ -919,7 +976,17 @@ export class PMachine {
    * and movers -- and a cycler reaching the end of its loop is what sends
    * `cue:`, which is how an SCI0 game steps a puzzle forward.
    */
+  /**
+   * The cast list `Animate` was last given.
+   *
+   * `Act::canBeHere` passes it to the kernel itself, but the step check
+   * inside `DoBresen` has no such argument and needs the same list, so
+   * it is kept here as the game hands it over.
+   */
+  private cast = 0;
+
   private animate(castH: number, f?: Frame): number {
+    this.cast = castH;
     if (this.selDoit === -2) this.selDoit = this.index.selectorId('doit');
     if (this.selDoit < 0 || !f) return 0;
     const items: { target: RtObject; sel: number; params: number[] }[] = [];
@@ -1575,6 +1642,9 @@ export class PMachine {
         const bottom = s16(u16(this.prop(o, 'brBottom')));
         if (right <= left || bottom <= top) return 1;    // no base yet
         if (left < 0 || right > WIDTH || top < 0 || bottom > HEIGHT) return 0;
+        // `Act::canBeHere` hands over the cast so that actors can stand
+        // in each other's way.
+        if (this.blockedByCast(o, left, top, right, bottom, a1 || this.cast)) return 0;
         const illegal = u16(this.prop(o, 'illegalBits'));
         if (!illegal) return 1;
         return (this.controlBits(left, top, right, bottom) & illegal) ? 0 : 1;
