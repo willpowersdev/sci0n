@@ -79,6 +79,15 @@ const MAX_FRAMES = 1024;
  * `peek` is a flag on the mask rather than a type: it asks to look at
  * the queue without taking anything off it.
  */
+/**
+ * The signal bit that pins an actor's priority.
+ *
+ * Not a guess: `View::setPri` sets it when given a priority and clears
+ * it when given -1, so it is the game's own record of "leave this
+ * alone".  Everything without it follows its y down the screen.
+ */
+export const SIGNAL_FIXED_PRIORITY = 0x10;
+
 export const EV = {
   null: 0x0000, mouseDown: 0x0001, mouseUp: 0x0002,
   keyboard: 0x0004, joystick: 0x0008, direction: 0x0040,
@@ -728,6 +737,45 @@ export class PMachine {
   }
 
   /**
+   * Could this actor stand with its feet at (x, y)?
+   *
+   * The base rectangle is worked out for the position being considered
+   * rather than read from the actor, so a step can be tested before it
+   * is taken.
+   */
+  private legalAt(o: RtObject, x: number, y: number): boolean {
+    const illegal = u16(this.prop(o, 'illegalBits'));
+    const cel = this.celOf(o);
+    if (!cel) return true;
+    const r = this.celRect(cel, x, y, s16(u16(this.prop(o, 'z'))));
+    const step = Math.max(1, s16(u16(this.prop(o, 'yStep', 2))));
+    const top = y + 1 - step, bottom = y + 1;
+    if (r.left < 0 || r.right > WIDTH || top < 0 || bottom > HEIGHT) return false;
+    if (!illegal) return true;
+    return (this.controlBits(r.left, top, r.right, bottom) & illegal) === 0;
+  }
+
+  /**
+   * The set of control colours under a rectangle, one bit per colour.
+   *
+   * The whole base is sampled rather than a single point, because a foot
+   * overlapping a wall by one pixel is what has to stop a walk.
+   */
+  private controlBits(left: number, top: number, right: number, bottom: number): number {
+    const x0 = Math.max(0, Math.min(WIDTH, left));
+    const x1 = Math.max(0, Math.min(WIDTH, right));
+    const y0 = Math.max(0, Math.min(HEIGHT, top));
+    const y1 = Math.max(0, Math.min(HEIGHT, bottom));
+    let bits = 0;
+    const map = this.screen.control;
+    for (let y = y0; y < y1; y++) {
+      const row = y * WIDTH;
+      for (let x = x0; x < x1; x++) bits |= 1 << (map[row + x] & 15);
+    }
+    return bits;
+  }
+
+  /**
    * Grow the count of the last selector group by what `&rest` added.
    *
    * A send carries several (selector, count, args...) groups and `&rest`
@@ -910,8 +958,17 @@ export class PMachine {
       const cel = this.celOf(o);
       if (!cel) continue;
       const r = this.celRect(cel, this.prop(o, 'x'), this.prop(o, 'y'), this.prop(o, 'z'));
+      // Unless the script has pinned it, an actor's priority follows its
+      // feet down the screen, and the property is rewritten so scripts
+      // reading it see the same band the drawing used.  Leaving a stale
+      // value in place is what let the ego walk in front of scenery it
+      // should have passed behind: Camelot's ego sat at priority 0 all
+      // game while standing in band 7.
       let pri = this.prop(o, 'priority', -1);
-      if (pri < 0 || pri > 15) pri = this.priorityOf(r.bottom - 1);
+      if (!(this.prop(o, 'signal') & SIGNAL_FIXED_PRIORITY)) {
+        pri = this.priorityOf(s16(u16(this.prop(o, 'y'))));
+        this.setProp(o, 'priority', pri);
+      } else if (pri < 0 || pri > 15) pri = this.priorityOf(r.bottom - 1);
       drawn.push({ o, cel, left: r.left, top: r.top, pri });
     }
     drawn.sort((a, b) => a.pri - b.pri);
@@ -1133,8 +1190,27 @@ export class PMachine {
         this.setProp(mover, 'xLast', cx);
         this.setProp(mover, 'yLast', cy);
         const step = this.bresenStep(mover, client, 1);
-        this.setProp(client, 'x', cx + step.dx);
-        this.setProp(client, 'y', cy + step.dy);
+        const nx = cx + step.dx, ny = cy + step.dy;
+        // Refuse a step onto ground this actor may not stand on.
+        //
+        // `Act::doit` does ask `canBeHere` after moving, but only when
+        // the base rectangle's left or right edge changed, so a walk
+        // straight up or down is never checked; and the `Avoid` avoider
+        // that would catch it is only fitted in the handful of rooms
+        // that ask for one.  The step itself is the one place every
+        // walk passes through.  A move out of a bad position is always
+        // allowed, so an actor that starts somewhere illegal -- or is
+        // put there by a script -- can still get out.
+        if (!this.legalAt(client, nx, ny) && this.legalAt(client, cx, cy)) {
+          // Telling the mover it has arrived is what ends the walk:
+          // `Motion::doit` compares its target against the client and
+          // calls `moveDone` when they agree.
+          this.setProp(mover, 'x', cx);
+          this.setProp(mover, 'y', cy);
+          return 0;
+        }
+        this.setProp(client, 'x', nx);
+        this.setProp(client, 'y', ny);
         this.setProp(mover, 'b-moveCnt',
           u16(this.prop(mover, 'b-moveCnt')) + 1);
         return 0;
@@ -1476,15 +1552,55 @@ export class PMachine {
        * finds somewhere it can stand, so a blanket "no" is an infinite
        * search that stops a room ever finishing its init.
        */
-      // TODO: both are stubs. `CanBeHere` answering yes to everything
-      // is why the ego can walk off the edge of the picture and keep
-      // going, and `OnControl` returning 0 means rooms never notice the
-      // ego reaching a doorway.  Implementing them against the control
-      // plane is the next piece of work; a first attempt moved the ego
-      // off screen anyway and broke Camelot's walking, so it wants doing
-      // properly rather than quickly.
-      case 'CanBeHere': return 1;
-      case 'OnControl': return 0;
+      /**
+       * May this actor stand where it now is?
+       *
+       * The control plane is a map of the floor: every pixel carries a
+       * colour, and an actor's `illegalBits` names the colours it may
+       * not stand on.  Only the base rectangle is tested, which is the
+       * actor's feet -- a head passing in front of a wall is ordinary,
+       * standing inside one is not.
+       *
+       * `Act::doit` asks this after every step and calls `findPosn` to
+       * nudge the actor back when the answer is no, so answering yes to
+       * everything, as this used to, is what let the ego walk through
+       * scenery and off the edge of the picture.
+       */
+      case 'CanBeHere': {
+        const o = this.resolveTarget(null, a0);
+        if (!o) return 1;
+        const left = s16(u16(this.prop(o, 'brLeft')));
+        const right = s16(u16(this.prop(o, 'brRight')));
+        const top = s16(u16(this.prop(o, 'brTop')));
+        const bottom = s16(u16(this.prop(o, 'brBottom')));
+        if (right <= left || bottom <= top) return 1;    // no base yet
+        if (left < 0 || right > WIDTH || top < 0 || bottom > HEIGHT) return 0;
+        const illegal = u16(this.prop(o, 'illegalBits'));
+        if (!illegal) return 1;
+        return (this.controlBits(left, top, right, bottom) & illegal) ? 0 : 1;
+      }
+
+      /**
+       * Which control colours lie under an actor, or under a rectangle.
+       *
+       * Rooms use it to notice the ego reaching a doorway or stepping
+       * into water, so returning 0 meant none of that ever fired.
+       */
+      case 'OnControl': {
+        // The first argument selects the map; only the control one is
+        // ever asked for here.  With four more it reports on a
+        // rectangle, with one more on an actor's base.
+        if (args.length >= 4) {
+          const x1 = s16(u16(a1)), y1 = s16(u16(args[2]));
+          const x2 = s16(u16(args[3] ?? a1)), y2 = s16(u16(args[4] ?? args[2]));
+          return this.controlBits(Math.min(x1, x2), Math.min(y1, y2),
+                                  Math.max(x1, x2) + 1, Math.max(y1, y2) + 1);
+        }
+        const o = this.resolveTarget(null, a1);
+        if (!o) return 0;
+        return this.controlBits(s16(u16(this.prop(o, 'brLeft'))), s16(u16(this.prop(o, 'brTop'))),
+                                s16(u16(this.prop(o, 'brRight'))), s16(u16(this.prop(o, 'brBottom'))));
+      }
 
       /**
        * Point an actor the way it is heading.
@@ -1492,7 +1608,7 @@ export class PMachine {
        * A view holds a loop per facing, and this picks the one matching
        * a heading in degrees clockwise from north.  Without it an actor
        * keeps whatever loop it last had, which is why the ego walked in
-       * every direction still facing right.
+       * every direction still facing one way.
        *
        * The four-loop convention is the views' own: 0 faces right, 1
        * left, 2 towards the viewer, 3 away.  A view with fewer loops
@@ -1524,16 +1640,13 @@ export class PMachine {
       case 'SetNowSeen': {
         const o = this.resolveTarget(null, a0);
         if (!o) return 0;
-        const v = this.view(this.prop(o, 'view'));
-        const cel = v?.loops[this.prop(o, 'loop')]?.[this.prop(o, 'cel')];
+        const cel = this.celOf(o);
         if (!cel) return 0;
-        const x = s16(u16(this.prop(o, 'x'))), y = s16(u16(this.prop(o, 'y')));
-        const left = x - (cel.width >> 1) + (cel.displaceX ?? 0);
-        const top = y - cel.height + 1 - (cel.displaceY ?? 0);
-        this.setProp(o, 'nsLeft', left);
-        this.setProp(o, 'nsTop', top);
-        this.setProp(o, 'nsRight', left + cel.width - 1);
-        this.setProp(o, 'nsBottom', top + cel.height - 1);
+        const r = this.celRect(cel, this.prop(o, 'x'), this.prop(o, 'y'), this.prop(o, 'z'));
+        this.setProp(o, 'nsLeft', r.left);
+        this.setProp(o, 'nsTop', r.top);
+        this.setProp(o, 'nsRight', r.right);
+        this.setProp(o, 'nsBottom', r.bottom);
         return 0;
       }
 
