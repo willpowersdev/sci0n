@@ -20,6 +20,7 @@ import { parseBank, type Instrument } from './opl/patch.ts';
 import { Player, resample, TICKS_PER_SECOND } from './opl/player.ts';
 import { OPL_RATE } from './opl/opl2.ts';
 import { encodeGIF, type Frame } from './gif.ts';
+import { encodeWAV } from './wav.ts';
 import { Scene } from './scene.ts';
 import { picHistogram, unditherCel } from './undither.ts';
 import * as RG from './roomgraph.ts';
@@ -213,21 +214,47 @@ function download(name: string, blob: Blob) {
 }
 
 /**
- * A button that saves the canvas.
+ * An export control, styled and labelled so it cannot be mistaken for a
+ * view toggle.  "PNG" alone, sitting after four mode buttons, reads as a
+ * fifth mode; it needs to say what it does.
+ */
+function exportButton(label: string, title: string, fn: () => void) {
+  const b = document.createElement('button');
+  b.className = 'exp';
+  b.textContent = `⤓ ${label}`;
+  b.title = title;
+  b.onclick = fn;
+  return b;
+}
+
+/** A divider, so the export group reads as separate from what precedes it. */
+function separator() {
+  const d = document.createElement('div');
+  d.className = 'sep';
+  return d;
+}
+
+/**
+ * Save the canvas.
  *
- * The canvas already holds the picture at display scale with the 1.2
- * aspect correction applied, which is what makes SCI art look right on a
+ * It already holds the picture at display scale with the 1.2 aspect
+ * correction applied, which is what makes SCI art look right on a
  * square-pixel screen -- so that is what gets written, rather than the
  * raw indexed buffer, and the file matches what is on screen.
  */
 function pngButton(name: string) {
-  const b = document.createElement('button');
-  b.textContent = 'PNG';
-  b.title = 'save this image as it appears, at display scale';
-  b.onclick = () => {
+  return exportButton('PNG', 'save this image as it appears, at display scale', () => {
     (cv as HTMLCanvasElement).toBlob(blob => { if (blob) download(`${name}.png`, blob); }, 'image/png');
-  };
-  return b;
+  });
+}
+
+/** Save whatever the text pane is currently showing. */
+function textButton(name: string) {
+  return exportButton('text', 'save this listing as a plain text file', () => {
+    const el = $('text');
+    const plain = (el.textContent ?? '');
+    download(`${name}.txt`, new Blob([plain], { type: 'text/plain;charset=utf-8' }));
+  });
 }
 
 const esc = (t: string) => t.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!));
@@ -262,6 +289,7 @@ function showText(num: number) {
   }).join('\n');
   showTextPane(`<span class="h">text ${num}</span> <span class="c">· ${lines.length} strings</span>\n\n${body}\n`);
   $('controls').innerHTML = '';
+  $('controls').append(separator(), textButton(`text${num}`));
   $('controls').insertAdjacentHTML('beforeend',
     `<span class="dim">text ${num} · ${lines.length} strings · ` +
     `${lines.reduce((a, t) => a + t.length, 0).toLocaleString()} chars</span>`);
@@ -319,7 +347,7 @@ function showFont(num: number) {
   });
   blit(rgb, w, h);
   $('controls').innerHTML = '';
-  $('controls').append(pngButton(`font${num}`));
+  $('controls').append(separator(), pngButton(`font${num}`));
   $('controls').insertAdjacentHTML('beforeend',
     `<span class="dim">font ${num} · ${f.chars.length} glyphs · line height ${f.lineHeight}` +
     ` · widest ${cw}px · tallest ${chh}px</span>`);
@@ -362,7 +390,7 @@ function showCursor(num: number) {
   blit(rgb, N, N);
   const lit = [...c.pixels].filter(v => v !== CURSOR_CLEAR).length;
   $('controls').innerHTML = '';
-  $('controls').append(pngButton(`cursor${num}`));
+  $('controls').append(separator(), pngButton(`cursor${num}`));
   $('controls').insertAdjacentHTML('beforeend',
     `<span class="dim">cursor ${num} · ${N}×${N} · hotspot ${hx},${hy} ` +
     `(marked red) · ${lit} opaque pixels</span>`);
@@ -451,7 +479,14 @@ function showSound(num: number) {
     playing = src;
     play.textContent = 'stop';
   };
-  $('controls').append(play);
+  const wav = exportButton('WAV', 'render this tune through the OPL2 and save it', () => {
+    if (!bank) return;
+    const p = new Player(s, bank);
+    const pcm = p.render(Math.min(120, p.duration));
+    const out = resample(pcm, OPL_RATE, 44100);
+    download(`sound${num}.wav`, new Blob([encodeWAV(out, 44100) as BlobPart], { type: 'audio/wav' }));
+  });
+  $('controls').append(play, separator(), wav, textButton(`sound${num}`));
   $('controls').insertAdjacentHTML('beforeend',
     `<span class="dim">sound ${num} · ${(s.ticks / TICKS_PER_SECOND).toFixed(1)}s · ` +
     `${notes.toLocaleString()} notes · ${s.channels.length} channels` +
@@ -572,6 +607,7 @@ function showVocab(num: number) {
 
   showTextPane(out.join('\n') + '\n');
   $('controls').innerHTML = '';
+  $('controls').append(separator(), textButton(`vocab${num}`));
   $('controls').insertAdjacentHTML('beforeend', `<span class="dim">vocab ${num} · ${summary}</span>`);
 }
 
@@ -728,6 +764,7 @@ function showScript(num: number) {
   }
   showTextPane(out.join('\n') + '\n');
   $('controls').innerHTML = '';
+  $('controls').append(separator(), textButton(`script${num}`));
   $('controls').insertAdjacentHTML('beforeend',
     `<span class="dim">script ${num} · ${sc.objects.length} objects · ` +
     `${sc.objects.reduce((a, o) => a + o.methods.length, 0)} methods · ` +
@@ -769,7 +806,7 @@ function showPic(num: number) {
                    : 'no room script stages this picture',
       () => { showSprites = !showSprites; showPic(num); }));
   }
-  $('controls').append(pngButton(`pic${num}_${mode}${staged ? '_scene' : ''}`));
+  $('controls').append(separator(), pngButton(`pic${num}_${mode}${staged ? '_scene' : ''}`));
   const bands = p.priorityBands ? ` · bands ${p.priorityBands.join(',')}` : '';
   const note = staged
     ? ` · script ${staged.script}: ${staged.placed} sprites placed` +
@@ -864,10 +901,7 @@ function showView(num: number) {
     play.textContent = 'stop';
     anim = window.setInterval(() => { frame++; draw(); }, ANIM_MS);
   };
-  const gif = document.createElement('button');
-  gif.textContent = 'GIF';
-  gif.title = 'save this loop as an animated GIF at native size';
-  gif.onclick = () => {
+  const gif = exportButton('GIF', 'save this loop as an animated GIF at native size', () => {
     const cels = v.loops[loop] ?? [];
     const laid = loopFrames(cels, Math.round(ANIM_MS / 10));
     if (!laid) return;
@@ -877,7 +911,7 @@ function showView(num: number) {
                               palette, frames: laid.frames });
     download(`view${num}_loop${loop}.gif`,
              new Blob([bytes as BlobPart], { type: 'image/gif' }));
-  };
+  });
   const und = toggle('undither', viewUndither,
     'merge dither pairs the game\'s backgrounds also use',
     () => { viewUndither = !viewUndither; showView(num); });

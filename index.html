@@ -19,6 +19,10 @@
   #main{display:flex;flex-direction:column;min-width:0;min-height:0}
   #bar{padding:10px 14px;border-bottom:1px solid var(--line);display:flex;gap:14px;align-items:center;flex-wrap:wrap}
   #controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  /* Export sits apart from the view toggles so it cannot read as one. */
+  .exp{border-color:var(--accent);color:var(--accent)}
+  .exp:hover{background:var(--accent);color:#08080c}
+  .sep{width:1px;align-self:stretch;background:var(--line);margin:0 4px}
   #stage{flex:1;display:grid;place-items:center;overflow:auto;padding:16px;min-height:0}
   /* Text viewers want the whole width, top-aligned, not centred like a canvas. */
   #stage.text{place-items:start stretch}
