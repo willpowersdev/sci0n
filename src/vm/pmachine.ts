@@ -165,6 +165,15 @@ export class PMachine {
   private objects = new Map<string, RtObject>();
   acc = 0;
   prev = 0;
+  /**
+   * Arguments `&rest` added to the call that follows it.
+   *
+   * `&rest` does not merely push: it widens the next call.  The compiler
+   * emits `pushi sel / push0 / &rest 2 / send 4` for `(send obj sel:
+   * &rest)`, where the operand counts only the two words it can see and
+   * the rest are added at run time.
+   */
+  private restAdjust = 0;
   stack: number[] = [];
   frames: Frame[] = [];
   trace: string[] = [];
@@ -477,7 +486,8 @@ export class PMachine {
             // convention `call`/`callb`/`calle` handle with their `- 1`.
             // Popping only the arguments leaks one slot per kernel call,
             // which a game's main loop turns into a steady stack climb.
-            const words = a[1] >> 1;
+            const words = (a[1] >> 1) + this.restAdjust;
+            this.restAdjust = 0;
             const pBase = st.length - words - 1;
             if (pBase < 0) { res.stopped = 'error'; res.detail = 'callk: params underflow'; break; }
             const args = st.splice(pBase, words + 1).slice(1);
@@ -487,7 +497,8 @@ export class PMachine {
           }
 
           case 'send': case 'self': case 'super': {
-            const words = Math.max(0, a[a.length - 1] >> 1);
+            const words = Math.max(0, a[a.length - 1] >> 1) + this.restAdjust;
+            this.restAdjust = 0;
             const args = st.splice(st.length - words, words);
             const target = ins.name === 'send' ? this.resolveTarget(f, this.acc) : f.obj;
             if (!target) {
@@ -507,7 +518,8 @@ export class PMachine {
           }
 
           case 'call': case 'callb': case 'calle': {
-            const words = Math.max(0, a[a.length - 1] >> 1);
+            const words = Math.max(0, a[a.length - 1] >> 1) + this.restAdjust;
+            this.restAdjust = 0;
             const pBase = st.length - words - 1;
             if (pBase < 0) { res.stopped = 'error'; res.detail = `${ins.name}: params underflow`; break; }
             let targetScript = f.scriptNo, targetPc = -1;
@@ -528,7 +540,16 @@ export class PMachine {
             // being used as a loop bound.
             const argc = this.stack[f.paramsBase] ?? 0;
             if (argc < 0 || argc > FRAME_WINDOW) break;
-            for (let i = a[0]; i <= argc; i++) st.push(this.stack[f.paramsBase + i] ?? 0);
+            let pushed = 0;
+            for (let i = a[0]; i <= argc; i++) { st.push(this.stack[f.paramsBase + i] ?? 0); pushed++; }
+            if (pushed) {
+              // The count word for the call being built sits just below
+              // what was pushed, and has to grow by the same amount or
+              // the callee is told it has fewer arguments than it does.
+              const at = st.length - pushed - 1;
+              if (at >= 0) st[at] = (st[at] ?? 0) + pushed;
+              this.restAdjust += pushed;
+            }
             break;
           }
 
@@ -601,7 +622,15 @@ export class PMachine {
       const found = p.fromSpecies !== undefined
         ? this.species.lookupFrom(p.fromSpecies, sel)
         : this.species.lookup(p.target.def, sel, p.target.scriptNo);
-      if (!found) { res.unresolvedSends++; continue; }
+      if (!found) {
+        // A selector the object does not answer returns nothing, and
+        // "nothing" has to be zero: leaving the accumulator alone lets
+        // whatever was in it stand as the result, and a caller like
+        // `firstTrue` reads that as success.
+        res.unresolvedSends++;
+        this.acc = 0;
+        continue;
+      }
       const pBase = this.stack.length;
       this.stack.push(argc, ...params);
       this.frames.push({ scriptNo: found.script, obj: p.target, pc: found.offset,
@@ -1443,7 +1472,11 @@ export class PMachine {
 
   private buffers = new Map<string, number>();
   /** Which variable slot a `lea` handle stands for. */
-  private bufferSlot = new Map<number, { kind: number; index: number; script: number }>();
+  private bufferSlot = new Map<number, {
+    kind: number; index: number; script: number;
+    /** For a temp or a parameter, the frame the slot belongs to. */
+    frame?: Frame;
+  }>();
 
   /**
    * A stable stand-in for the address of one variable slot.
@@ -1466,7 +1499,12 @@ export class PMachine {
       this.buffers.set(key, h);
       this.strings.set(h, '');
     }
-    this.bufferSlot.set(h, { kind, index: at, script });
+    // A stack address only means anything while the frame that owns it
+    // is still running.  Recording the frame is what stops a handle kept
+    // in some object's property from later writing into whatever method
+    // happens to occupy those slots now -- which corrupts its temps, and
+    // a method whose temp is its return value then returns nonsense.
+    this.bufferSlot.set(h, { kind, index: at, script, frame: stack ? f : undefined });
     return h;
   }
 
@@ -1477,6 +1515,8 @@ export class PMachine {
     if (!slot) return null;
     if (slot.kind === 0) return { arr: this.globals, index: slot.index };
     if (slot.kind === 1) return { arr: this.localsOf(slot.script), index: slot.index };
+    // The frame has returned, so those slots are somebody else's now.
+    if (!slot.frame || !this.frames.includes(slot.frame)) return null;
     return { arr: this.stack, index: slot.index };
   }
 

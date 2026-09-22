@@ -132,9 +132,9 @@ These are deliberate and stated rather than hidden:
   input, draws text, and opens windows with their controls — LSL2 reaches its
   copy-protection dialog with the prompt wrapped inside a message box and a working
   edit field. Menus, the parser and save/restore are still stubs, so a game runs and
-  animates without being completable. Keystrokes reach the game — `GetEvent` delivers
-  them — but the dialogs do not yet route them to their edit field, so the
-  copy-protection prompt cannot be answered. KQ4 and QFG1 stop with an error during
+  animates without being completable. Typing works: LSL2's copy-protection field
+  accepts digits, and answering it wrongly makes the game quit, which is the game
+  working. KQ4, Iceman and QFG1 stop with an error during start-up. KQ4 and QFG1 stop with an error during
   start-up; Iceman runs but has not drawn a picture by frame 300.
 - **The behavioural model is a hypothesis, not a proof.** A tested global is not
   necessarily a precondition — the scan covers a whole handler body, so tests in a

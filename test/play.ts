@@ -9,6 +9,11 @@
  * Resumption is the part most likely to break silently -- a slice that
  * unwound its frames would restart the game every frame and still look
  * busy -- so the instruction count is required to keep climbing.
+ *
+ * No keys are pressed.  Enter answers whatever dialog is open, and both
+ * LSL2 and Colonel's Bequest quit when their copy-protection question is
+ * answered wrongly -- which is the game working, not failing, but is
+ * indistinguishable here from a crash.
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -32,7 +37,6 @@ for (const name of GAMES) {
   let st = s.tick();
   let firstHalf = 0;
   for (let i = 0; i < 300 && st.running; i++) {
-    if (i % 25 === 24) s.key(13);
     st = s.tick();
     if (st.picture >= 0) pics.add(st.picture);
     if (i === 149) firstHalf = st.instructions;
