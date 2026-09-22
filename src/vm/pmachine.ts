@@ -24,6 +24,7 @@ import { Picture } from '../pic.ts';
 import { Font } from '../font.ts';
 import { strings as textStrings } from '../text.ts';
 import { Screen, WIDTH, HEIGHT } from './screen.ts';
+import { SoundBox, SIGNAL_FINISHED } from './sounds.ts';
 
 /**
  * Debug sampler.  A blocked synchronous loop never reaches a timer or
@@ -187,6 +188,23 @@ export class PMachine {
   mouseY = 95;
   /** Number of the picture currently shown, for the host. */
   currentPic = -1;
+  /** The AdLib driver the game drives through `DoSound`. */
+  sounds: SoundBox;
+
+  /**
+   * Tell any script waiting on music that its piece has finished.
+   *
+   * Audio is produced by whatever is pulling samples, which is not the
+   * machine, so a finished piece has to be noticed rather than returned.
+   * `Sound::check` polls `signal` and a room script's `changeState` will
+   * sit on the same state for ever until it reads -1 here.
+   */
+  pumpSounds() {
+    for (const handle of this.sounds.takeEnded()) {
+      const obj = this.resolveTarget(null, handle);
+      if (obj) this.setProp(obj, 'signal', SIGNAL_FINISHED);
+    }
+  }
   private views = new Map<number, View | null>();
   private fonts = new Map<number, Font | null>();
   private selCache = new Map<string, number>();
@@ -211,6 +229,7 @@ export class PMachine {
   constructor(game: Game, index?: Index) {
     this.game = game;
     this.index = index ?? new Index(game);
+    this.sounds = new SoundBox(game, this.index);
     this.species = new SpeciesTable(game, this.index);
     const s0 = this.script(0);
     if (s0) this.globals.set(Int32Array.from(s0.locals.map(s16)).subarray(0, 1024));
@@ -1237,9 +1256,70 @@ export class PMachine {
         return 1;
       }
 
+      /**
+       * The sound driver.
+       *
+       * A `Sound` object carries the resource number and is its own
+       * handle; the driver reports back by way of the object's `signal`
+       * property, which is what `Sound::check` polls.  Subops the games
+       * never call, and queries with nothing to answer from, fall
+       * through to zero.
+       */
+      case 'DoSound': {
+        const verb = this.sounds.verb(a0);
+        if (!verb) return 0;
+        // Every verb but the global ones names the game's own `Sound`
+        // object, which doubles as the driver's handle for the piece.
+        const obj = a1 ? this.resolveTarget(null, a1) : null;
+        const num = obj ? this.prop(obj, 'number') : 0;
+        switch (verb) {
+          case 'init':
+            if (obj) { this.sounds.init(a1, num); this.setProp(obj, 'handle', a1); }
+            return 0;
+          case 'play':
+            if (obj) {
+              // `loop` counts repeats; -1 is what a script sets to mean
+              // "keep going", and anything else plays the piece once.
+              this.sounds.play(a1, num, s16(u16(this.prop(obj, 'loop'))) === -1);
+              this.setProp(obj, 'handle', a1);
+              this.setProp(obj, 'signal', 0);
+            }
+            return 0;
+          case 'dispose': this.sounds.dispose(a1); return 0;
+          case 'stop':
+            this.sounds.stop(a1);
+            if (obj) this.setProp(obj, 'signal', 0);
+            return 0;
+          // SCI0's `Sound::pause` passes its own argument straight
+          // through, so there it is a flag and everything stops
+          // together; SCI01 names the piece and passes the flag second.
+          case 'pause':
+            if (this.sounds.sci01) this.sounds.pause(a1, !!(args[2] ?? 1));
+            else this.sounds.pause(0, !!a1);
+            return 0;
+          case 'mute':
+            if (args.length > 1) this.sounds.setMuted(!!a1);
+            return this.sounds.muted ? 1 : 0;
+          case 'masterVolume':
+            if (args.length > 1) this.sounds.setMasterVolume(a1);
+            return this.sounds.masterVolume;
+          case 'fade': this.sounds.fade(a1); return 0;
+          // Nine melodic voices, which is what the chip has.
+          case 'getPolyphony': return 9;
+          case 'stopAll': this.sounds.stopAll(); return 0;
+          // `check` is polled every cycle; the answer a script wants is
+          // carried on the object's own `signal`, which `pumpSounds`
+          // writes, so there is nothing to return here.
+          case 'check': case 'update': case 'hold':
+          case 'sendMidi': case 'restore': case 'resume':
+            return 0;
+        }
+        return 0;
+      }
+
       case 'DisposeScript': case 'FlushResources': case 'MemoryInfo':
       case 'SetMenu': case 'AddMenu': case 'DrawMenuBar': case 'SetSynonyms':
-      case 'GetSaveDir': case 'GetCWD': case 'DoSound':
+      case 'GetSaveDir': case 'GetCWD':
       case 'FileIO':
       case 'FOpen': case 'FClose': case 'FGets': case 'FPuts':
         return 0;

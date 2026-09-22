@@ -61,6 +61,18 @@ let raf = 0;
 let soundHeader = -1;
 let audio: AudioContext | null = null;
 let playing: AudioBufferSourceNode | null = null;
+/**
+ * Where the game's next audio chunk belongs on the output's timeline.
+ *
+ * The interpreter runs in slices on this thread and a slice is allowed
+ * 120ms, so anything rendering audio in step with it would break up.
+ * Chunks are rendered ahead instead and scheduled at explicit times, so
+ * the sound card plays from a queue and a slow frame is inaudible.
+ */
+let audioAt = 0;
+let gameGain: GainNode | null = null;
+/** Seconds of audio kept queued ahead of the output, and chunk size. */
+const AUDIO_LEAD = 0.5, AUDIO_CHUNK = 0.1;
 let kind = 'pic';
 let current: { type: number; num: number } | null = null;
 let mode: 'visual' | 'undithered' | 'priority' | 'control' = 'visual';
@@ -233,6 +245,11 @@ function keyMessage(e: KeyboardEvent): number | null {
 /** Stop the game and give the browsing chrome back. */
 function stopPlay() {
   if (raf) { cancelAnimationFrame(raf); raf = 0; }
+  if (session) session.vm.sounds.stopAll();
+  // Chunks already scheduled would otherwise keep playing after the
+  // game has gone.
+  if (gameGain) { try { gameGain.disconnect(); } catch { /* gone */ } gameGain = null; }
+  audioAt = 0;
   session = null;
   document.body.classList.remove('play');
   ($('quit') as HTMLElement).hidden = true;
@@ -302,6 +319,35 @@ function grabFocus() {
  * milliseconds, so a script that never yields slows the game down
  * instead of hanging the tab.
  */
+/**
+ * Keep the sound card fed from the game's driver.
+ *
+ * `mix` is pulled for exactly as many samples as the queue is short, so
+ * the music is paced by the audio clock rather than by the frame rate
+ * and cannot drift away from what the chip is meant to be playing.
+ */
+function pumpAudio(s: Session) {
+  const ctx = audio;
+  if (!ctx || !gameGain) return;
+  const box = s.vm.sounds;
+  // A queue that has run dry -- a background tab, a long stall -- is
+  // picked up from the present rather than replayed from where it left.
+  if (audioAt < ctx.currentTime) audioAt = ctx.currentTime + 0.05;
+  const n = Math.round(AUDIO_CHUNK * box.rate);
+  const scratch = new Float32Array(n);
+  while (audioAt < ctx.currentTime + AUDIO_LEAD) {
+    box.mix(scratch);
+    const pcm = resample(scratch, box.rate, ctx.sampleRate);
+    const buf = ctx.createBuffer(1, pcm.length, ctx.sampleRate);
+    buf.copyToChannel(pcm, 0);
+    const node = ctx.createBufferSource();
+    node.buffer = buf;
+    node.connect(gameGain);
+    node.start(audioAt);
+    audioAt += pcm.length / ctx.sampleRate;
+  }
+}
+
 function startPlay() {
   if (!game) return;
   stopAnim(); stopSound();
@@ -325,6 +371,15 @@ function startPlay() {
   // Clicking the picture must not take focus away from the field.
   cv.addEventListener('mousedown', grabFocus);
 
+  // A page that has not been interacted with may not start audio, so the
+  // context is created here and resumed on the first key or click.
+  audio ??= new AudioContext();
+  gameGain = audio.createGain();
+  gameGain.gain.value = 0.8;
+  gameGain.connect(audio.destination);
+  audioAt = 0;
+  void audio.resume();
+
   const rgb = new Uint8Array(WIDTH * SCREEN_HEIGHT * 3);
   const frame = () => {
     if (!session) return;
@@ -334,9 +389,11 @@ function startPlay() {
     $('hud').textContent =
       `${st.frames} frames · ${(st.instructions / 1e6).toFixed(1)}M instructions` +
       `${st.picture >= 0 ? ` · picture ${st.picture}` : ''}` +
+      (session.vm.sounds.active ? ` · ♪ ${session.vm.sounds.active}` : '') +
       (st.running ? `  ·  ${session.cyclesPerSecond.toFixed(0)} cycles/s` +
                     '  ·  shift-esc to leave  ·  fn fn to dictate'
                   : `  ·  stopped: ${st.stopped ?? ''}`);
+    if (session.vm.sounds.available) pumpAudio(session);
     if (st.running) raf = requestAnimationFrame(frame);
   };
   raf = requestAnimationFrame(frame);

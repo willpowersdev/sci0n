@@ -16,6 +16,9 @@ import { DEVICE_ADLIB, type Sound } from '../sound.ts';
 
 export const TICKS_PER_SECOND = 60;
 
+/** How long a fade takes, in samples: three quarters of a second. */
+const FADE_SAMPLES = Math.round(OPL_RATE * 0.75);
+
 interface Voice { channel: number; note: number; midi: number; age: number }
 
 /**
@@ -153,6 +156,86 @@ export class Player {
   get duration() { return this.sound.ticks / TICKS_PER_SECOND + 1; }
 
   /**
+   * How far rendering has got, in samples, and which event comes next.
+   *
+   * Kept on the player rather than inside `render` so a game can pull
+   * the piece out a buffer at a time.  Offline rendering asks for the
+   * whole thing at once and never looks at them.
+   */
+  private pos = 0;
+  private next = 0;
+  /** Set once the last event has been played and the tail has run out. */
+  finished = false;
+  /** Restart from the top instead of finishing. */
+  loop = false;
+  /** Scales everything this piece sounds, for fades and master volume. */
+  gain = 1;
+  /**
+   * Ramp the piece away and finish it.
+   *
+   * The driver faded over a fixed number of steps; what is audible is
+   * the ramp, and ending the piece at the bottom of it means a script
+   * waiting on the music is released exactly as a natural ending would
+   * release it, rather than hanging on a silent player.
+   */
+  fadeOut = false;
+  private fadeLeft = 0;
+
+  /** Rewind to the start without discarding the chip's configuration. */
+  rewind() {
+    this.pos = 0; this.next = 0; this.finished = false;
+    this.fadeOut = false; this.fadeLeft = 0;
+  }
+
+  /**
+   * One sample, applying whatever events have come due first.
+   *
+   * Timing lives here rather than in either caller: the piece is walked
+   * by sample count, so rendering it in one go and pulling it out a
+   * buffer at a time produce the same audio, and the offline test keeps
+   * covering the path the game uses.
+   */
+  private step(): number {
+    const ev = this.sound.events;
+    const tick = this.pos * TICKS_PER_SECOND / OPL_RATE;
+    while (this.next < ev.length && ev[this.next].tick <= tick) {
+      this.event(ev[this.next].status, ev[this.next].a, ev[this.next].b);
+      this.next++;
+    }
+    let v = this.opl.rawSample();
+    for (const d of this.drums) v += d.sample(OPL_RATE) * 2.2;
+    this.pos++;
+    return Math.tanh(v / 3.2);
+  }
+
+  /**
+   * Render the next `out.length` samples, continuing where the last call
+   * stopped.  Returns how many were written, which is short only when
+   * the piece has ended and is not looping.
+   */
+  advance(out: Float32Array): number {
+    const end = Math.ceil(this.duration * OPL_RATE);
+    let n = 0;
+    while (n < out.length && !this.finished) {
+      // `duration` already carries a tail, so reaching it with no events
+      // left means the last note has been given time to die away.
+      if (this.next >= this.sound.events.length && this.pos >= end) {
+        if (this.loop) { this.rewind(); continue; }
+        this.finished = true;
+        break;
+      }
+      let g = this.gain;
+      if (this.fadeOut) {
+        if (!this.fadeLeft) this.fadeLeft = FADE_SAMPLES;
+        g *= this.fadeLeft / FADE_SAMPLES;
+        if (--this.fadeLeft <= 0) { this.finished = true; }
+      }
+      out[n++] = this.step() * g;
+    }
+    return n;
+  }
+
+  /**
    * Render the whole piece at the chip's rate.  Events are applied when
    * the running sample count reaches their tick, so timing comes from
    * the music rather than from any scheduler.
@@ -160,18 +243,8 @@ export class Player {
   render(seconds = this.duration): Float32Array {
     const total = Math.ceil(seconds * OPL_RATE);
     const out = new Float32Array(total);
-    const ev = this.sound.events;
-    let i = 0;
-    for (let s = 0; s < total; s++) {
-      const tick = s * TICKS_PER_SECOND / OPL_RATE;
-      while (i < ev.length && ev[i].tick <= tick) {
-        this.event(ev[i].status, ev[i].a, ev[i].b);
-        i++;
-      }
-      let v = this.opl.rawSample();
-      for (const d of this.drums) v += d.sample(OPL_RATE) * 2.2;
-      out[s] = Math.tanh(v / 3.2);
-    }
+    this.rewind();
+    for (let s = 0; s < total; s++) out[s] = this.step();
     return out;
   }
 }

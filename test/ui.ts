@@ -91,6 +91,8 @@ g.AudioContext = class { sampleRate = 44100; resume() { return Promise.resolve()
   get destination() { return {}; } };
 g.clearInterval = () => {};
 g.location = { search: `?game=${GAME}` };
+// The page records the chosen game in the URL; there is no URL here.
+g.history = { replaceState() {} };
 
 // The skeleton index.html declares, including #title inside #bar.
 for (const id of ['pick', 'gameinfo', 'tabs', 'list', 'bar', 'title',

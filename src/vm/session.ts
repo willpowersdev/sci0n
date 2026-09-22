@@ -134,6 +134,7 @@ export class Session {
       : this.vm.run(this.entry.script, this.entry.obj, this.entry.pc,
                     { steps: this.budget, keep: true, deadline: Date.now() + 120 });
     this.started = true;
+    this.vm.pumpSounds();
     this.instructions += r.steps;
     this.frames++;
     if (r.stopped !== 'step-limit' && r.stopped !== 'timeout')
