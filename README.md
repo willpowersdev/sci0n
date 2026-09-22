@@ -20,6 +20,9 @@ the games. Point `SCI_GAMES` at a directory holding one folder per game.
 | Text / vocab | String tables, parser words, suffix rules, class table |
 | Fonts / cursors | 6,528 glyphs, 24 cursors |
 | Sound | 747 SCI0 resources, 609,750 events, OPL2 synthesis |
+| Imaging | Cel undithering (ScummVM's cross-check) and MLAA |
+| Scenes | 754 rooms composited from static props, 2,709 sprites placed |
+| Analysis | Room graph, room links, a per-room behavioural model over 17,058 Said handlers, and a planner over it |
 
 ## Running it
 
@@ -32,7 +35,7 @@ SCI_GAMES=/path/to/games npm run serve      # then open http://localhost:8017
 a directory picker for browsing without the server route.
 
 ```sh
-SCI_GAMES=/path/to/games npm test           # the differential suites
+SCI_GAMES=/path/to/games npm test           # twelve differential suites
 SCI_GAMES=/path/to/games npm run test:ui    # drives the page through a DOM shim
 SCI_GAMES=/path/to/games npm run test:vm    # interpreter sweep and boot
 ```
@@ -97,6 +100,15 @@ These are deliberate and stated rather than hidden:
   local variable from a script with no locals block; QFG1 dies in `Act::canBeHere`
   on a path that needs `BaseSetter`.
 - **There is no input source**, so games that wait at a title screen stay there.
+- **The behavioural model is a hypothesis, not a proof.** A tested global is not
+  necessarily a precondition — the scan covers a whole handler body, so tests in a
+  nested branch are attributed to the command as a whole — conditions held in object
+  properties are missed, and transitions whose destination is computed cannot be
+  resolved. It maps what is *possible* per room, not what will work.
+- **`roomgraph.layout` does not reproduce the reference's coordinates.** It is seeded
+  from Python's Mersenne Twister there and from a small generator here. The graph is
+  identical; only the dot positions differ, which is why the test digests the
+  structure and not the layout.
 
 ## Licence
 

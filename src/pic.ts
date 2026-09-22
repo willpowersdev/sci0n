@@ -5,7 +5,8 @@
  * three 320x190 canvases at once; each opcode consumes arguments until
  * the next byte >= 0xF0, so argument lists are self-terminating.
  */
-import { EGA_RGB, DEFAULT_PIC_PALETTE, DEFAULT_PRIORITY_TABLE, ditherPixel } from './ega.ts';
+import { EGA_RGB, DEFAULT_PIC_PALETTE, DEFAULT_PRIORITY_TABLE,
+         ditherPixel, BLENDED_RGB } from './ega.ts';
 
 export const WIDTH = 320, HEIGHT = 190;
 
@@ -88,6 +89,22 @@ export class Picture {
     for (let y = 0; y < HEIGHT; y++) for (let x = 0; x < WIDTH; x++) {
       const c = EGA_RGB[ditherPixel(this.visual[i++], x, y)];
       out[o++] = c[0]; out[o++] = c[1]; out[o++] = c[2];
+    }
+    return out;
+  }
+
+  /**
+   * Merge each dither pair into one colour -- the "remastered" look.
+   *
+   * No pattern detection is needed: the visual plane stores the pair
+   * explicitly, so this is purely a blending choice.  See BLENDED_RGB
+   * for why the mix happens in linear light.
+   */
+  unditheredRGB(): Uint8Array {
+    const out = new Uint8Array(WIDTH * HEIGHT * 3);
+    for (let i = 0, o = 0; i < this.visual.length; i++, o += 3) {
+      const c = BLENDED_RGB[this.visual[i]];
+      out[o] = c[0]; out[o + 1] = c[1]; out[o + 2] = c[2];
     }
     return out;
   }

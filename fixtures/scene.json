@@ -1,0 +1,66 @@
+{
+ "CAMELOT": {
+  "digest": "8182ffd11fc2418d",
+  "placed": 243,
+  "rooms": 89,
+  "sends": 1167,
+  "sprites": 243,
+  "unresolved": 578
+ },
+ "COLONEL": {
+  "digest": "b081c89d227c15d7",
+  "placed": 687,
+  "rooms": 98,
+  "sends": 1488,
+  "sprites": 687,
+  "unresolved": 425
+ },
+ "HERO": {
+  "digest": "05b396cdd22f7e37",
+  "placed": 463,
+  "rooms": 118,
+  "sends": 1816,
+  "sprites": 463,
+  "unresolved": 1001
+ },
+ "ICE": {
+  "digest": "304ce67fef249b12",
+  "placed": 462,
+  "rooms": 88,
+  "sends": 1186,
+  "sprites": 462,
+  "unresolved": 555
+ },
+ "KQ4": {
+  "digest": "5104cfc183272ceb",
+  "placed": 0,
+  "rooms": 103,
+  "sends": 2178,
+  "sprites": 0,
+  "unresolved": 1875
+ },
+ "LSL2": {
+  "digest": "9f337e3a8ab04932",
+  "placed": 20,
+  "rooms": 89,
+  "sends": 1870,
+  "sprites": 20,
+  "unresolved": 1577
+ },
+ "QFG2": {
+  "digest": "5ce3276bc25959b1",
+  "placed": 808,
+  "rooms": 92,
+  "sends": 958,
+  "sprites": 808,
+  "unresolved": 276
+ },
+ "SQ3": {
+  "digest": "23b9dc2bf2ad0b30",
+  "placed": 26,
+  "rooms": 77,
+  "sends": 1091,
+  "sprites": 26,
+  "unresolved": 660
+ }
+}

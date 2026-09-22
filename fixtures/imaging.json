@@ -1,0 +1,162 @@
+{
+ "CAMELOT": {
+  "aa_pic": 0,
+  "cels": 975,
+  "hist_digest": "0405c785a7bd7c84",
+  "merged": 9,
+  "mlaa_digest": "e625a4873bb418dd",
+  "pics": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7,
+   8,
+   9
+  ],
+  "undither_digest": "ffc01051e3fd7de0"
+ },
+ "COLONEL": {
+  "aa_pic": 1,
+  "cels": 1022,
+  "hist_digest": "d983b32c669c7a46",
+  "merged": 0,
+  "mlaa_digest": "f0df2c60662b1c31",
+  "pics": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7,
+   8,
+   9,
+   10
+  ],
+  "undither_digest": "de65b02b0d989962"
+ },
+ "HERO": {
+  "aa_pic": 10,
+  "cels": 1093,
+  "hist_digest": "a2a3dc2189d537c9",
+  "merged": 50,
+  "mlaa_digest": "d1afb799b4e1e1fe",
+  "pics": [
+   10,
+   13,
+   14,
+   15,
+   16,
+   21,
+   22,
+   28,
+   29,
+   30
+  ],
+  "undither_digest": "d0578e2f7d64294a"
+ },
+ "ICE": {
+  "aa_pic": 1,
+  "cels": 985,
+  "hist_digest": "a1e1e97857c3e6e3",
+  "merged": 105,
+  "mlaa_digest": "ba5282cc5fc4a3ec",
+  "pics": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7,
+   8,
+   9,
+   10
+  ],
+  "undither_digest": "a206633e46da1e93"
+ },
+ "KQ4": {
+  "aa_pic": 1,
+  "cels": 743,
+  "hist_digest": "dd0f02a353d16d4b",
+  "merged": 0,
+  "mlaa_digest": "4fa708caa37f40e0",
+  "pics": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7,
+   8,
+   9,
+   10
+  ],
+  "undither_digest": "909b3404d386bee3"
+ },
+ "LSL2": {
+  "aa_pic": 10,
+  "cels": 212,
+  "hist_digest": "38f484460acf2f17",
+  "merged": 1,
+  "mlaa_digest": "c5067faf84222cdb",
+  "pics": [
+   10,
+   11,
+   12,
+   13,
+   14,
+   15,
+   16,
+   17,
+   18,
+   19
+  ],
+  "undither_digest": "9973953dd2cab3a8"
+ },
+ "QFG2": {
+  "aa_pic": 1,
+  "cels": 1077,
+  "hist_digest": "9ca81001d7eb8f00",
+  "merged": 1,
+  "mlaa_digest": "b9ebe96e0456b00c",
+  "pics": [
+   1,
+   2,
+   3,
+   100,
+   101,
+   110,
+   120,
+   130,
+   140,
+   150
+  ],
+  "undither_digest": "e23d83d66807bb22"
+ },
+ "SQ3": {
+  "aa_pic": 1,
+  "cels": 603,
+  "hist_digest": "5520ebbb25314b35",
+  "merged": 8,
+  "mlaa_digest": "15980b68c8703d70",
+  "pics": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7,
+   8,
+   9,
+   10
+  ],
+  "undither_digest": "a2dae85b7dcd476c"
+ }
+}
