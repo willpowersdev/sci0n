@@ -1486,6 +1486,57 @@ export class PMachine {
       case 'CanBeHere': return 1;
       case 'OnControl': return 0;
 
+      /**
+       * Point an actor the way it is heading.
+       *
+       * A view holds a loop per facing, and this picks the one matching
+       * a heading in degrees clockwise from north.  Without it an actor
+       * keeps whatever loop it last had, which is why the ego walked in
+       * every direction still facing right.
+       *
+       * The four-loop convention is the views' own: 0 faces right, 1
+       * left, 2 towards the viewer, 3 away.  A view with fewer loops
+       * than that has no back or front to turn to, so the heading only
+       * chooses between left and right.
+       */
+      case 'DirLoop': {
+        const o = this.resolveTarget(null, a0);
+        if (!o) return 0;
+        const angle = ((s16(u16(a1)) % 360) + 360) % 360;
+        // Early SCI0 used a narrower arc for front and back; the later
+        // interpreter widened both to a full quadrant.
+        const arc = this.index.selectorShift === 1 ? 30 : 45;
+        let loop = -1;
+        if (angle > 360 - arc || angle < arc) loop = 3;            // away
+        else if (angle > 180 - arc && angle < 180 + arc) loop = 2; // towards
+        if (loop < 0) loop = angle >= 180 ? 1 : 0;                 // left : right
+        else if ((this.view(this.prop(o, 'view'))?.loopCount ?? 0) < 4) return 0;
+        this.setProp(o, 'loop', loop);
+        return 0;
+      }
+
+      /**
+       * Refresh an actor's "now seen" rectangle from its current cel.
+       *
+       * Rooms test against this rectangle, so leaving it behind after a
+       * turn makes an actor respond to the shape it used to be.
+       */
+      case 'SetNowSeen': {
+        const o = this.resolveTarget(null, a0);
+        if (!o) return 0;
+        const v = this.view(this.prop(o, 'view'));
+        const cel = v?.loops[this.prop(o, 'loop')]?.[this.prop(o, 'cel')];
+        if (!cel) return 0;
+        const x = s16(u16(this.prop(o, 'x'))), y = s16(u16(this.prop(o, 'y')));
+        const left = x - (cel.width >> 1) + (cel.displaceX ?? 0);
+        const top = y - cel.height + 1 - (cel.displaceY ?? 0);
+        this.setProp(o, 'nsLeft', left);
+        this.setProp(o, 'nsTop', top);
+        this.setProp(o, 'nsRight', left + cel.width - 1);
+        this.setProp(o, 'nsBottom', top + cel.height - 1);
+        return 0;
+      }
+
       // --- view metrics -----------------------------------------------
       // A cycler decides it has finished by comparing `cel` against the
       // loop's last cel, so `NumCels` returning 0 means no cycle ever

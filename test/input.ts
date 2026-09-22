@@ -12,6 +12,7 @@
  * the first its meaning:
  *
  *   - each arrow moves the ego in the direction it names;
+ *   - the ego is drawn facing the way it is walking;
  *   - the ego keeps moving, rather than jumping once;
  *   - a key that is not a direction moves it nowhere.
  *
@@ -28,12 +29,21 @@ import { Session } from '../src/vm/session.ts';
 import { ROOT } from './games.ts';
 
 const ENTER = 0x0D, SPACE = 0x20;
-/** Each arrow, and the sign it should put on x and y. */
-const ARROWS: Array<[string, number, number, number]> = [
-  ['up',    0x4800,  0, -1],
-  ['down',  0x5000,  0,  1],
-  ['left',  0x4B00, -1,  0],
-  ['right', 0x4D00,  1,  0],
+/**
+ * Each arrow: the sign it should put on x and y, and the loop the ego
+ * should end up drawn in.
+ *
+ * The loop numbering is the views' own, not a guess: in both games the
+ * ego's view carries a mirror mask of 0x2, so loop 1 is stored as the
+ * flip of loop 0 -- the pair is one walk facing each way along the
+ * horizontal -- and loops 2 and 3 have a different cel count again,
+ * being the walks towards and away from the viewer.
+ */
+const ARROWS: Array<[string, number, number, number, number]> = [
+  ['up',    0x4800,  0, -1, 3],
+  ['down',  0x5000,  0,  1, 2],
+  ['left',  0x4B00, -1,  0, 1],
+  ['right', 0x4D00,  1,  0, 0],
 ];
 /** A move has to clear this many pixels to count as a walk, not a nudge. */
 const WALKED = 8;
@@ -75,7 +85,7 @@ for (const name of ['SQ3', 'CAMELOT']) {
 
   settle();
   console.log(`${name}  picture ${st.picture}, ego at ${x()},${y()}`);
-  for (const [label, key, wantX, wantY] of ARROWS) {
+  for (const [label, key, wantX, wantY, wantLoop] of ARROWS) {
     const x0 = x(), y0 = y();
     s.key(key);
     for (let i = 0; i < 90 && st.running; i++) st = step();
@@ -85,11 +95,15 @@ for (const name of ['SQ3', 'CAMELOT']) {
     const along = wantX ? dx * wantX : dy * wantY;
     const across = wantX ? Math.abs(dy) : Math.abs(dx);
     const ok = along >= WALKED && across <= WALKED;
-    checked++;
+    const loop = vm.prop(ego, 'loop');
+    const facing = loop === wantLoop;
+    checked += 2;
     if (!ok) failed++;
+    if (!facing) failed++;
     console.log(`  ${label.padEnd(5)} ${String(x0 + ',' + y0).padStart(8)} -> ` +
       `${String(x() + ',' + y()).padEnd(8)} d=(${dx},${dy})  ` +
-      `${ok ? 'walks ' + label : `EXPECTED ${label.toUpperCase()}`}`);
+      `${ok ? 'walks ' + label : `EXPECTED ${label.toUpperCase()}`}` +
+      `, loop ${loop} ${facing ? `(faces ${label})` : `-- EXPECTED LOOP ${wantLoop}`}`);
     settle();
   }
 
