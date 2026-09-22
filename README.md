@@ -24,6 +24,7 @@ the games. Point `SCI_GAMES` at a directory holding one folder per game.
 | Scenes | 754 rooms composited from static props, 2,709 sprites placed |
 | Analysis | Room graph, room links, a per-room behavioural model over 17,058 Said handlers, and a planner over it |
 | Export | PNG from any image tab; animated GIF for a view's loop |
+| **Playing** | **5 of 8 games boot, draw and keep running in the browser** |
 
 ## Running it
 
@@ -39,6 +40,11 @@ A picture has a **sprites** toggle that composites the props its room script sta
 priority-tested against the pic so sprites sit behind the scenery they should. A view
 has an **undither** toggle that merges the dither pairs the game's backgrounds also
 use. Both work alongside the existing visual/undithered/priority/control modes.
+
+**▶ Play this game** runs the interpreter itself: the VM executes a slice per
+displayed frame, draws the cast over the picture with the priority test that beds
+sprites into scenery, and takes keyboard and mouse input. Shift-Escape leaves.
+Five of the eight games reach a picture and keep running; see the limits below.
 
 Pictures, views, fonts and cursors each have a **PNG** button, which saves the image
 as displayed — at view scale, with the 1.2 aspect correction that makes SCI art look
@@ -115,7 +121,11 @@ These are deliberate and stated rather than hidden:
 - **KQ4 and QFG1 do not boot.** KQ4 dies in a copy-protection script that reads a
   local variable from a script with no locals block; QFG1 dies in `Act::canBeHere`
   on a path that needs `BaseSetter`.
-- **There is no input source**, so games that wait at a title screen stay there.
+- **The interpreter is partial.** It draws pictures and the cast, moves actors and
+  takes input, but `Display` (text on screen), windows, menus, the parser and the
+  save/restore path are still stubs that return zero, so a game will run and animate
+  without yet being completable. KQ4 and QFG1 stop with an error during start-up;
+  Iceman runs but has not drawn a picture by frame 300.
 - **The behavioural model is a hypothesis, not a proof.** A tested global is not
   necessarily a precondition — the scan covers a whole handler body, so tests in a
   nested branch are attributed to the command as a whole — conditions held in object

@@ -20,6 +20,13 @@ const idsIn = (html: string) => [...html.matchAll(/id="([^"]+)"/g)].map(m => m[1
 
 class El {
   tag: string; children: any[] = []; style: Record<string, string> = {};
+  // Enough of an element for the page to set up play mode without a
+  // real browser: a class list, listeners and a rectangle to map
+  // pointer coordinates against.
+  classList = { add() {}, remove() {} };
+  disabled = false;
+  addEventListener() {}
+  getBoundingClientRect() { return { left: 0, top: 0, width: 960, height: 684 }; }
   textContent = ''; className = ''; value = ''; hidden = false;
   width = 0; height = 0;
   onclick: (() => void) | null = null; onchange: (() => void) | null = null;
@@ -64,10 +71,14 @@ g.document = {
   createElement: (t: string) => new El(t),
   getElementById: (id: string) => reg.get(id) ?? null,
   title: '',
+  body: new El('body'),
 };
+g.requestAnimationFrame = () => 1;
+g.cancelAnimationFrame = () => {};
 g.Option = class { text: string; value: string;
   constructor(t: string, v: string) { this.text = t; this.value = v; } };
-g.window = { setInterval: () => 1, clearInterval: () => {} };
+g.window = { setInterval: () => 1, clearInterval: () => {},
+             addEventListener: () => {}, removeEventListener: () => {} };
 // Playback is user-driven and not exercised here; the viewer only has to
 // build its controls without an audio device present.
 g.AudioContext = class { sampleRate = 44100; resume() { return Promise.resolve(); }
@@ -80,7 +91,7 @@ g.location = { search: `?game=${GAME}` };
 
 // The skeleton index.html declares, including #title inside #bar.
 for (const id of ['pick', 'gameinfo', 'tabs', 'list', 'bar', 'title',
-                  'controls', 'stage', 'cv', 'text']) {
+                  'controls', 'stage', 'cv', 'text', 'play', 'quit', 'hud']) {
   const e = new El(id === 'cv' ? 'canvas' : 'div'); e.id = id;
 }
 reg.get('bar')!.children.push(reg.get('title')!, reg.get('controls')!);

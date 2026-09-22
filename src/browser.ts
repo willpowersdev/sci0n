@@ -21,6 +21,8 @@ import { Player, resample, TICKS_PER_SECOND } from './opl/player.ts';
 import { OPL_RATE } from './opl/opl2.ts';
 import { encodeGIF, type Frame } from './gif.ts';
 import { encodeWAV } from './wav.ts';
+import { Session, SCREEN_HEIGHT } from './vm/session.ts';
+import { EV } from './vm/pmachine.ts';
 import { Scene } from './scene.ts';
 import { picHistogram, unditherCel } from './undither.ts';
 import * as RG from './roomgraph.ts';
@@ -54,6 +56,8 @@ let picToScript: Map<number, number[]> | null = null;
 let picHist: Int32Array | null = null;
 let showSprites = false;
 let viewUndither = false;
+let session: Session | null = null;
+let raf = 0;
 let soundHeader = -1;
 let audio: AudioContext | null = null;
 let playing: AudioBufferSourceNode | null = null;
@@ -202,6 +206,83 @@ function toggle(label: string, on: boolean, title: string, fn: () => void) {
   if (on) b.style.borderColor = 'var(--accent)';
   b.onclick = fn;
   return b;
+}
+
+/**
+ * Browser key to the message an SCI0 script expects.
+ *
+ * Printable keys arrive as their character code.  Everything else is the
+ * PC scancode in the high byte, which is the encoding the interpreter
+ * handed to scripts and which the games compare against directly.
+ */
+const SCAN: Record<string, number> = {
+  ArrowUp: 0x4800, ArrowDown: 0x5000, ArrowLeft: 0x4B00, ArrowRight: 0x4D00,
+  Home: 0x4700, End: 0x4F00, PageUp: 0x4900, PageDown: 0x5100,
+  Insert: 0x5200, Delete: 0x5300,
+  F1: 0x3B00, F2: 0x3C00, F3: 0x3D00, F4: 0x3E00, F5: 0x3F00,
+  F6: 0x4000, F7: 0x4100, F8: 0x4200, F9: 0x4300, F10: 0x4400,
+  Enter: 13, Escape: 27, Backspace: 8, Tab: 9, ' ': 32,
+};
+function keyMessage(e: KeyboardEvent): number | null {
+  const s = SCAN[e.key];
+  if (s !== undefined) return s;
+  if (e.key.length === 1) return e.key.charCodeAt(0);
+  return null;
+}
+
+/** Stop the game and give the browsing chrome back. */
+function stopPlay() {
+  if (raf) { cancelAnimationFrame(raf); raf = 0; }
+  session = null;
+  document.body.classList.remove('play');
+  ($('quit') as HTMLElement).hidden = true;
+  ($('hud') as HTMLElement).hidden = true;
+  window.removeEventListener('keydown', onPlayKey, true);
+  if (current) render();
+}
+
+function onPlayKey(e: KeyboardEvent) {
+  if (!session) return;
+  if (e.key === 'Escape' && e.shiftKey) { stopPlay(); return; }
+  const m = keyMessage(e);
+  if (m === null) return;
+  e.preventDefault();
+  session.key(m, (e.shiftKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.altKey ? 4 : 0));
+}
+
+/**
+ * Run the game.
+ *
+ * One slice of interpreter per displayed frame, then the screen is
+ * copied to the canvas.  The slice is bounded in both instructions and
+ * milliseconds, so a script that never yields slows the game down
+ * instead of hanging the tab.
+ */
+function startPlay() {
+  if (!game) return;
+  stopAnim(); stopSound();
+  const s = new Session(game, index ?? undefined);
+  if (!s.ready) { $('gameinfo').textContent = 'this game exposes no entry point'; return; }
+  session = s;
+  document.body.classList.add('play');
+  stageMode(false);
+  ($('quit') as HTMLElement).hidden = false;
+  ($('hud') as HTMLElement).hidden = false;
+  window.addEventListener('keydown', onPlayKey, true);
+
+  const rgb = new Uint8Array(WIDTH * SCREEN_HEIGHT * 3);
+  const frame = () => {
+    if (!session) return;
+    const st = session.tick();
+    session.screen.rgb(rgb);
+    blit(rgb, WIDTH, SCREEN_HEIGHT);
+    $('hud').textContent =
+      `${st.frames} frames · ${(st.instructions / 1e6).toFixed(1)}M instructions` +
+      `${st.picture >= 0 ? ` · picture ${st.picture}` : ''}` +
+      (st.running ? '  ·  shift-esc to leave' : `  ·  stopped: ${st.stopped ?? ''}`);
+    if (st.running) raf = requestAnimationFrame(frame);
+  };
+  raf = requestAnimationFrame(frame);
 }
 
 /** Hand the browser a file to save, and let go of the object URL after. */
@@ -998,7 +1079,27 @@ function adopt(g: Game) {
     Object.entries(counts).sort((a, b) => b[1] - a[1])
       .map(([k, v]) => `${v} ${k}`).join(', ');
   buildTabs(); render();
+  ($('play') as HTMLButtonElement).disabled = false;
 }
+
+($('quit') as HTMLButtonElement).onclick = stopPlay;
+($('play') as HTMLButtonElement).onclick = startPlay;
+// The canvas is scaled and aspect-corrected, so a click has to be mapped
+// back to the 320x190 the game thinks it is drawing on.
+cv.addEventListener('mousemove', (e) => {
+  if (!session) return;
+  const r = cv.getBoundingClientRect();
+  const x = Math.round((e.clientX - r.left) / r.width * WIDTH);
+  const y = Math.round((e.clientY - r.top) / r.height * SCREEN_HEIGHT) - 10;
+  session.move(Math.max(0, Math.min(319, x)), Math.max(0, Math.min(189, y)));
+});
+cv.addEventListener('mousedown', (e) => {
+  if (!session) return;
+  const r = cv.getBoundingClientRect();
+  const x = Math.round((e.clientX - r.left) / r.width * WIDTH);
+  const y = Math.round((e.clientY - r.top) / r.height * SCREEN_HEIGHT) - 10;
+  session.mouse(EV.mouseDown, Math.max(0, Math.min(319, x)), Math.max(0, Math.min(189, y)));
+});
 
 ($('pick') as HTMLInputElement).onchange = async (e) => {
   const files = (e.target as HTMLInputElement).files;

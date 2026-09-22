@@ -38,12 +38,26 @@
   button:hover{border-color:var(--accent)}
   .dim{color:var(--dim)}
   input[type=file]{font:inherit;color:var(--dim);width:100%}
+  /* Playing takes the whole window: the browsing chrome would only be
+     something to click on by accident. */
+  body.play{grid-template-columns:1fr}
+  body.play #side,body.play #bar{display:none}
+  body.play #stage{padding:0;background:#000;place-items:center}
+  #play{width:100%;margin-top:8px;padding:5px;border:1px solid var(--accent);
+        color:var(--accent);background:var(--panel);border-radius:4px;cursor:pointer}
+  #play:hover{background:var(--accent);color:#08080c}
+  #play[disabled]{opacity:.4;cursor:default;border-color:var(--line);color:var(--dim)}
+  #quit{position:fixed;top:8px;right:10px;z-index:5;opacity:.25}
+  #quit:hover{opacity:1}
+  #hud{position:fixed;bottom:6px;left:10px;z-index:5;color:var(--dim);
+       font:11px ui-monospace,Menlo,monospace;opacity:.5}
 </style>
 <div id="side">
   <header>
     <h1>SCI0 Explorer</h1>
     <input id="pick" type="file" webkitdirectory directory multiple>
     <div class="dim" id="gameinfo" style="margin-top:8px">Choose a game folder</div>
+    <button id="play" disabled>▶ Play this game</button>
   </header>
   <div id="tabs"></div>
   <div id="list"></div>
@@ -52,5 +66,9 @@
   <!-- #title is permanent; #controls is the part each viewer rebuilds. -->
   <div id="bar"><span class="dim" id="title">nothing loaded</span><span id="controls"></span></div>
   <div id="stage"><canvas id="cv" width="960" height="684"></canvas><pre id="text" hidden></pre></div>
+</div>
+<button id="quit" hidden>exit</button>
+<div id="hud" hidden></div>
+<div style="display:none">
 </div>
 <script type="module" src="./dist/app.js"></script>

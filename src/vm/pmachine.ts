@@ -19,7 +19,10 @@ import type { Game } from '../resources.ts';
 import { Script, SciObject, Index } from '../script.ts';
 import { decode } from '../disasm.ts';
 import { SpeciesTable } from './heap.ts';
-import { View } from '../view.ts';
+import { View, type Cel } from '../view.ts';
+import { Picture } from '../pic.ts';
+import { Font } from '../font.ts';
+import { Screen, WIDTH, HEIGHT } from './screen.ts';
 
 /**
  * Debug sampler.  A blocked synchronous loop never reaches a timer or
@@ -67,6 +70,21 @@ const FRAME_WINDOW = 512;
 const MAX_STACK = 8192;
 /** Frames, not JS stack depth -- an explicit stack can go much deeper. */
 const MAX_FRAMES = 1024;
+
+/**
+ * SCI0 event types, as the scripts test them.
+ *
+ * `peek` is a flag on the mask rather than a type: it asks to look at
+ * the queue without taking anything off it.
+ */
+export const EV = {
+  null: 0x0000, mouseDown: 0x0001, mouseUp: 0x0002,
+  keyboard: 0x0004, joystick: 0x0008, said: 0x0080, peek: 0x8000,
+} as const;
+
+export interface SciEvent {
+  type: number; message: number; modifiers: number; x: number; y: number;
+}
 
 export class RtObject {
   readonly def: SciObject;
@@ -150,6 +168,18 @@ export class PMachine {
   frames: Frame[] = [];
   trace: string[] = [];
   traceLimit = 0;
+  /** What the game has drawn. */
+  screen = new Screen();
+  /** Input waiting to be collected by GetEvent. */
+  events: SciEvent[] = [];
+  /** Where the pointer is, which several kernels report. */
+  mouseX = 160;
+  mouseY = 95;
+  /** Number of the picture currently shown, for the host. */
+  currentPic = -1;
+  private views = new Map<number, View | null>();
+  private fonts = new Map<number, Font | null>();
+  private selCache = new Map<string, number>();
 
   constructor(game: Game, index?: Index) {
     this.game = game;
@@ -236,9 +266,19 @@ export class PMachine {
    * main loop iterates by sending to itself, so recursing per send would
    * grow the JS stack without bound and cap how long a game can run.
    */
+  /**
+   * Run until the starting frame returns, a limit trips, or the machine
+   * cannot continue.
+   *
+   * `resume` continues an earlier run instead of starting one: a game's
+   * main loop never returns, so playing it means executing a slice per
+   * displayed frame and picking up exactly where the last slice stopped.
+   * When a slice runs out of budget the frames are left standing for
+   * that reason -- unwinding them would restart the game every frame.
+   */
   run(scriptNo: number, obj: RtObject | null, pc: number,
       opts: { steps?: number; trace?: number; deadline?: number;
-              paramsBase?: number } = {}): RunResult {
+              paramsBase?: number; resume?: boolean; keep?: boolean } = {}): RunResult {
     const limit = opts.steps ?? 20000;
     const deadline = opts.deadline ?? (Date.now() + 250);
     this.traceLimit = opts.trace ?? 0;
@@ -248,15 +288,18 @@ export class PMachine {
       unresolvedSends: 0, unresolvedKind: new Map(), maxStack: 0, maxDepth: 0,
       budget: limit, deadline,
     };
-    const base = this.frames.length;
-    const floor = this.stack.length;
-    // A frame nobody called still needs a well-formed argument block.
-    // Without one, paramsBase points at whatever the method itself
-    // pushes first, and `&rest` reads that as the argument count.
-    let paramsBase = opts.paramsBase;
-    if (paramsBase === undefined) { paramsBase = this.stack.length; this.stack.push(0); }
-    this.frames.push({ scriptNo, obj, pc, tempsBase: this.stack.length,
-                       paramsBase, argc: this.stack[paramsBase] ?? 0 });
+    const base = opts.resume ? 0 : this.frames.length;
+    const floor = opts.resume ? 0 : this.stack.length;
+    if (!opts.resume) {
+      // A frame nobody called still needs a well-formed argument block.
+      // Without one, paramsBase points at whatever the method itself
+      // pushes first, and `&rest` reads that as the argument count.
+      let paramsBase = opts.paramsBase;
+      if (paramsBase === undefined) { paramsBase = this.stack.length; this.stack.push(0); }
+      this.frames.push({ scriptNo, obj, pc, tempsBase: this.stack.length,
+                         paramsBase, argc: this.stack[paramsBase] ?? 0 });
+    }
+    if (!this.frames.length) { res.stopped = 'ret'; return res; }
 
     while (res.steps < limit) {
       if ((res.steps & 0x0F) === 0 && Date.now() > deadline) {
@@ -482,8 +525,11 @@ export class PMachine {
       res.detail = this.frameDump(base);
     else if (res.stopped === 'error' || res.stopped === 'invalid-opcode')
       res.detail = `${res.detail ?? ''} at ${this.frameDump(base)}`;
-    while (this.frames.length > base) this.frames.pop();
-    this.stack.length = floor;
+    const ranOut = res.stopped === 'step-limit' || res.stopped === 'timeout';
+    if (!(opts.keep && ranOut)) {
+      while (this.frames.length > base) this.frames.pop();
+      this.stack.length = floor;
+    }
     return res;
   }
 
@@ -609,7 +655,9 @@ export class PMachine {
   samples = new Map<string, number>();
 
   /** What Animate actually reached, for measurement. */
-  animateStats = { calls: 0, doits: 0, max: 0, names: new Set<string>() };
+  animateStats = { calls: 0, doits: 0, max: 0, drawn: 0, names: new Set<string>() };
+  /** Priority bands of the current picture. */
+  picBands = [42, 53, 64, 74, 85, 95, 106, 116, 127, 138, 148, 159, 169, 180];
 
 
   /** Walk a list to its values, cycle-guarded against damaged links. */
@@ -659,7 +707,45 @@ export class PMachine {
     this.animateStats.max = Math.max(this.animateStats.max, items.length);
     for (const it of items) this.animateStats.names.add(it.target.name);
     if (items.length) f.kcalls = { items, i: 0, result: 0 };
+    // Drawing happens now, from the properties as they stand.  The
+    // doit: calls queued above run afterwards and take effect on the
+    // next frame, which is the order the interpreter used: a cycler
+    // advances a cel for the frame after the one being drawn.
+    this.drawCast(castH);
     return 0;
+  }
+
+  /**
+   * Composite every visible cast member over the picture.
+   *
+   * Sorted by priority so nearer sprites overwrite farther ones, and
+   * each pixel still tested against the picture's own priority, which is
+   * what puts an actor behind scenery rather than in front of it.
+   */
+  private drawCast(castH: number) {
+    this.screen.restore();
+    const drawn: Array<{ o: RtObject; cel: Cel; left: number; top: number; pri: number }> = [];
+    for (const v of this.listValues(castH)) {
+      const o = this.resolveTarget(null, v);
+      if (!o) continue;
+      // signal bit 0x0008 is "hidden"; a view of -1 is nothing to draw.
+      if (this.prop(o, 'signal') & 0x0008) continue;
+      const cel = this.celOf(o);
+      if (!cel) continue;
+      const r = this.celRect(cel, this.prop(o, 'x'), this.prop(o, 'y'), this.prop(o, 'z'));
+      let pri = this.prop(o, 'priority', -1);
+      if (pri < 0 || pri > 15) pri = this.priorityOf(r.bottom - 1);
+      drawn.push({ o, cel, left: r.left, top: r.top, pri });
+    }
+    drawn.sort((a, b) => a.pri - b.pri);
+    for (const d of drawn) this.screen.drawCel(d.cel, d.left, d.top, d.pri);
+    this.animateStats.drawn += drawn.length;
+  }
+
+  /** Sierra's y -> priority band. */
+  priorityOf(y: number): number {
+    const bands = this.picBands;
+    return Math.max(1, Math.min(15, bands.filter(b => b <= y).length));
   }
 
   /**
@@ -748,6 +834,143 @@ export class PMachine {
 
       case 'Animate': return this.animate(a0, f);
 
+      // --- picture and cels -------------------------------------------
+      case 'DrawPic': {
+        const d = this.game.tryData('pic', a0);
+        if (!d) return 0;
+        try {
+          const pic = new Picture(d);
+          // `clear` is the third argument; games pass 0 to overlay.
+          this.screen.drawPic(pic, (args[2] ?? 1) !== 0);
+          this.picBands = pic.priorityBands ?? this.picBands;
+          this.currentPic = a0;
+        } catch { /* a picture that will not decode leaves the last one */ }
+        return 0;
+      }
+      case 'DrawCel': {
+        // DrawCel(view, loop, cel, x, y, priority)
+        const v = this.view(a0);
+        const cels = v?.loops[a1];
+        const cel = cels?.[args[2] ?? 0];
+        if (!cel) return 0;
+        this.screen.drawCel(cel, args[3] ?? 0, args[4] ?? 0, args[5] ?? 15);
+        return 0;
+      }
+      case 'AddToPic': {
+        // Bake the cast list handed in straight into the background.
+        for (const val of this.listValues(a0)) {
+          const o = this.resolveTarget(null, val);
+          if (!o) continue;
+          const cel = this.celOf(o);
+          if (!cel) continue;
+          const r = this.celRect(cel, this.prop(o, 'x'), this.prop(o, 'y'), this.prop(o, 'z'));
+          let pri = this.prop(o, 'priority', -1);
+          if (pri < 0 || pri > 15) pri = this.priorityOf(r.bottom - 1);
+          this.screen.addToPic(cel, r.left, r.top, pri);
+        }
+        return 0;
+      }
+      case 'PicNotValid': return 0;
+      case 'Graph': return 0;
+      case 'GetPort': case 'SetPort': return 0;
+
+      // --- placement and movement --------------------------------------
+      case 'BaseSetter': {
+        // The base rectangle is the strip of floor a sprite stands on:
+        // as wide as the cel, `yStep` deep, at its feet.  CanBeHere
+        // tests this, not the whole sprite.
+        const o = this.resolveTarget(null, a0);
+        if (!o) return 0;
+        const cel = this.celOf(o);
+        if (!cel) return 0;
+        const y = this.prop(o, 'y'), z = this.prop(o, 'z');
+        const r = this.celRect(cel, this.prop(o, 'x'), y, z);
+        const step = Math.max(1, this.prop(o, 'yStep', 2));
+        this.setProp(o, 'brLeft', r.left);
+        this.setProp(o, 'brRight', r.right);
+        this.setProp(o, 'brBottom', y + 1);
+        this.setProp(o, 'brTop', y + 1 - step);
+        this.setProp(o, 'nsLeft', r.left);
+        this.setProp(o, 'nsRight', r.right);
+        this.setProp(o, 'nsTop', r.top);
+        this.setProp(o, 'nsBottom', r.bottom);
+        return 0;
+      }
+      case 'DoBresen': {
+        // One step of the straight-line mover: walk toward (xLast, yLast)
+        // by (xStep, yStep) and report arrival by clearing the mover.
+        const o = this.resolveTarget(null, a0);
+        if (!o) return 0;
+        const cx = this.prop(o, 'x'), cy = this.prop(o, 'y');
+        const tx = this.prop(o, 'xLast', cx), ty = this.prop(o, 'yLast', cy);
+        const sx = Math.max(1, Math.abs(this.prop(o, 'xStep', 3)));
+        const sy = Math.max(1, Math.abs(this.prop(o, 'yStep', 2)));
+        const dx = tx - cx, dy = ty - cy;
+        if (Math.abs(dx) <= sx && Math.abs(dy) <= sy) {
+          this.setProp(o, 'x', tx); this.setProp(o, 'y', ty);
+          return 1;                      // arrived
+        }
+        this.setProp(o, 'x', cx + Math.sign(dx) * Math.min(sx, Math.abs(dx)));
+        this.setProp(o, 'y', cy + Math.sign(dy) * Math.min(sy, Math.abs(dy)));
+        return 0;
+      }
+      case 'GlobalToLocal': case 'LocalToGlobal': {
+        // There is one port covering the picture, so the two spaces are
+        // the same and the coordinates pass through unchanged.
+        return 0;
+      }
+
+      // --- input --------------------------------------------------------
+      case 'HaveMouse': return 1;
+      case 'SetCursor': {
+        if (args.length >= 3) { this.mouseX = a1; this.mouseY = args[2] ?? this.mouseY; }
+        return 0;
+      }
+      case 'GetEvent': {
+        const mask = a0;
+        const ev = this.resolveTarget(null, a1);
+        const i = this.events.findIndex(e => (e.type & mask) !== 0);
+        if (i < 0) { if (ev) this.setProp(ev, 'type', EV.null); return 0; }
+        const e = this.events[i];
+        if (!(mask & EV.peek)) this.events.splice(i, 1);
+        if (ev) {
+          this.setProp(ev, 'type', e.type);
+          this.setProp(ev, 'message', e.message);
+          this.setProp(ev, 'modifiers', e.modifiers);
+          this.setProp(ev, 'x', e.x);
+          this.setProp(ev, 'y', e.y);
+        }
+        return 1;
+      }
+      case 'GameIsRestarting': return 0;
+      case 'Joystick': return 0;
+
+      // --- text and windows ---------------------------------------------
+      case 'DrawStatus': {
+        this.screen.status = this.stringAt(a0);
+        return 0;
+      }
+      case 'TextSize': {
+        // TextSize(rect, text, font, maxWidth): report the pixel size.
+        const f = this.font(args[2] ?? 0);
+        const t = this.stringAt(a1);
+        let w = 0, h = 8;
+        if (f) { for (const ch of t) { const g = f.chars[ch.charCodeAt(0)]; if (g) { w += g.width; h = Math.max(h, g.height); } } }
+        const rect = this.resolveTarget(null, a0);
+        if (rect) { /* the rect is a raw array in script memory; size is
+                       reported through the return value instead */ }
+        return (h << 16) | (w & 0xFFFF);
+      }
+
+      // --- things that only need to not fail -----------------------------
+      case 'DisposeScript': case 'FlushResources': case 'MemoryInfo':
+      case 'SetMenu': case 'AddMenu': case 'DrawMenuBar': case 'SetSynonyms':
+      case 'GetSaveDir': case 'GetCWD': case 'DoSound': case 'NewWindow':
+      case 'DisposeWindow': case 'Display': case 'DrawControl': case 'EditControl':
+      case 'HiliteControl': case 'Format': case 'GetFarText': case 'FileIO':
+      case 'FOpen': case 'FClose': case 'FGets': case 'FPuts':
+        return 0;
+
       // --- geometry ---------------------------------------------------
       // SCI angles are degrees clockwise from north, which is why sine
       // drives x and cosine drives y (and y grows downward, so it is
@@ -818,6 +1041,75 @@ export class PMachine {
     if (!o) return -1;
     const i = o.indexOfSelector(this.index.selectorId(name));
     return i < 0 ? -1 : o.props[i];
+  }
+
+  /** Selector id by name, cached; -1 when the game has no such selector. */
+  sel(name: string): number {
+    let v = this.selCache.get(name);
+    if (v === undefined) { v = this.index.selectorId(name); this.selCache.set(name, v); }
+    return v;
+  }
+
+  /** Read a named property of an object, or a default. */
+  prop(o: RtObject, name: string, dflt = 0): number {
+    const i = o.indexOfSelector(this.sel(name));
+    return i < 0 ? dflt : o.props[i];
+  }
+  setProp(o: RtObject, name: string, v: number) {
+    const i = o.indexOfSelector(this.sel(name));
+    if (i >= 0) o.props[i] = v;
+  }
+
+  /** Decoded font, cached. */
+  font(n: number): Font | null {
+    if (!this.fonts.has(n)) {
+      const d = this.game.tryData('font', n);
+      let f: Font | null = null;
+      if (d) { try { f = new Font(d); } catch { f = null; } }
+      this.fonts.set(n, f);
+    }
+    return this.fonts.get(n) ?? null;
+  }
+
+  /**
+   * Where a cel lands and how big it is.
+   *
+   * (x, y) is the sprite's bottom centre, displaceX signed and negated
+   * on a mirrored loop, displaceY unsigned -- the same convention the
+   * static scene compositor uses, because it is the same convention the
+   * interpreter used.
+   */
+  celRect(cel: Cel, x: number, y: number, z: number) {
+    const dx = cel.mirrored ? -cel.xShift : cel.xShift;
+    const dy = cel.yShift >= 0 ? cel.yShift : cel.yShift + 256;
+    const left = x + dx - (cel.width >> 1);
+    const bottom = y + dy - z + 1;
+    return { left, top: bottom - cel.height, right: left + cel.width, bottom };
+  }
+
+  /** The cel an object's view/loop/cel properties name. */
+  celOf(o: RtObject): Cel | null {
+    const v = this.view(this.prop(o, 'view', -1));
+    if (!v) return null;
+    const loop = v.loops[this.prop(o, 'loop')] ?? v.loops[0];
+    if (!loop || !loop.length) return null;
+    return loop[Math.min(Math.max(0, this.prop(o, 'cel')), loop.length - 1)] ?? null;
+  }
+
+  /**
+   * Read a NUL-terminated string a script pointed at.
+   *
+   * A tagged reference names its script; a bare offset is assumed to sit
+   * in script 0, which is where the shared strings live.
+   */
+  stringAt(ref: number): string {
+    const scriptNo = isRef(ref) ? refScript(ref) : 0;
+    const off = isRef(ref) ? refOffset(ref) : ref;
+    const sc = this.script(scriptNo);
+    if (!sc || off <= 0 || off >= sc.data.length) return '';
+    let out = '';
+    for (let p = off; p < sc.data.length && sc.data[p]; p++) out += String.fromCharCode(sc.data[p]);
+    return out;
   }
 
   /** A script's exported object, which is how scripts reach each other. */
