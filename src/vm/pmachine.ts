@@ -430,7 +430,18 @@ export class PMachine {
               ? makeRef(l.script, l.offset + 12) : 0;
             break;
           }
-          case 'lea': this.acc = 0; break;
+          case 'lea': {
+            // The address of a variable, which is how a script hands the
+            // kernel somewhere to write: `Format` and `GetFarText` are
+            // both given a buffer this way.  There is no byte-addressable
+            // script memory for a variable here, so each slot gets a
+            // stable handle standing in for its address -- returning zero
+            // instead, as this did, makes every formatted string null.
+            const kind = (a[0] >> 1) & 3;
+            const idx = a[1] + ((a[0] & 0x10) ? this.acc : 0);
+            this.acc = this.bufferFor(kind, idx, f.scriptNo, f);
+            break;
+          }
 
           case 'lofsa': case 'lofss': {
             const off = next + a[0];
@@ -584,7 +595,11 @@ export class PMachine {
       const pi = p.fromSpecies === undefined ? p.target.indexOfSelector(sel) : -1;
       if (pi >= 0) {
         if (argc === 0) this.acc = p.target.props[pi];
-        else p.target.props[pi] = params[0];
+        else {
+          p.target.props[pi] = params[0];
+          const dbg = (globalThis as any).__propWatch;
+          if (dbg) dbg(p.target.name, this.index.selectorName(sel), params[0]);
+        }
         continue;
       }
       const found = p.fromSpecies !== undefined
@@ -1011,17 +1026,22 @@ export class PMachine {
       // --- things that only need to not fail -----------------------------
       case 'Display': return this.display(args);
       case 'GetFarText': {
-        // GetFarText(resource, line, buffer) hands back the text itself.
-        const lines = this.textLines(a0);
-        return this.makeString(lines[a1] ?? '');
+        // GetFarText(resource, line, buffer) fills the buffer and returns
+        // it, so the caller can go on using the address it passed in.
+        const text = this.textLines(a0)[a1] ?? '';
+        const buf = args[2] ?? 0;
+        if (this.strings.has(buf)) { this.strings.set(buf, text); return buf; }
+        return this.makeString(text);
       }
       case 'Format': {
-        // Format(dest, source, ...) -- the source may be a string or a
-        // (resource, line) pair, same as Display.
+        // Format(dest, source, ...) writes into dest and returns it; the
+        // source may be a string or a (resource, line) pair.
         let i = 1, src: string;
         if (this.strings.has(a1) || isRef(a1)) { src = this.stringAt(a1); i = 2; }
         else { src = this.textLines(a1)[args[2] ?? 0] ?? ''; i = 3; }
-        return this.makeString(this.format(src, args.slice(i)));
+        const out = this.format(src, args.slice(i));
+        if (this.strings.has(a0)) { this.strings.set(a0, out); return a0; }
+        return this.makeString(out);
       }
       case 'StrLen': return this.stringAt(a0).length;
       case 'StrCpy': return a0;
@@ -1348,6 +1368,21 @@ export class PMachine {
    * script memory, not only read from it.
    */
   writeWords(ref: number, values: number[]) {
+    // A `lea` handle names a run of variables, not a place in script
+    // memory, and that is where a rectangle filled by the kernel has to
+    // land -- the script reads it straight back out of those variables.
+    const slot = this.slotArray(ref);
+    if (slot) {
+      for (let i = 0; i < values.length; i++) {
+        const at = slot.index + i;
+        if (at < 0) continue;
+        if (Array.isArray(slot.arr)) {
+          while (slot.arr.length <= at) slot.arr.push(0);
+          slot.arr[at] = values[i];
+        } else if (at < slot.arr.length) slot.arr[at] = values[i];
+      }
+      return;
+    }
     const scriptNo = isRef(ref) ? refScript(ref) : 0;
     const off = isRef(ref) ? refOffset(ref) : ref;
     const sc = this.script(scriptNo);
@@ -1358,6 +1393,45 @@ export class PMachine {
       sc.data[p] = values[i] & 0xFF;
       sc.data[p + 1] = (values[i] >> 8) & 0xFF;
     }
+  }
+
+  private buffers = new Map<string, number>();
+  /** Which variable slot a `lea` handle stands for. */
+  private bufferSlot = new Map<number, { kind: number; index: number; script: number }>();
+
+  /**
+   * A stable stand-in for the address of one variable slot.
+   *
+   * Globals and locals are identified by index, so one handle can serve
+   * every use of that slot.  A temp or a parameter lives on the value
+   * stack at an address that depends on the frame, so those are keyed by
+   * where they actually are -- the `Print` dialogs measure themselves
+   * into a temporary rectangle, and a handle that forgot which frame it
+   * came from would write into somebody else's.
+   */
+  bufferFor(kind: number, index: number, script: number, f: Frame): number {
+    const stack = kind === 2 || kind === 3;
+    const at = kind === 2 ? f.tempsBase + index
+             : kind === 3 ? f.paramsBase + index : index;
+    const key = stack ? `s:${at}` : `${kind}:${index}:${script}`;
+    let h = this.buffers.get(key);
+    if (h === undefined) {
+      h = this.alloc();
+      this.buffers.set(key, h);
+      this.strings.set(h, '');
+    }
+    this.bufferSlot.set(h, { kind, index: at, script });
+    return h;
+  }
+
+  /** Where a `lea` handle points, if anywhere writable. */
+  private slotArray(h: number):
+      { arr: Int32Array | number[]; index: number } | null {
+    const slot = this.bufferSlot.get(h);
+    if (!slot) return null;
+    if (slot.kind === 0) return { arr: this.globals, index: slot.index };
+    if (slot.kind === 1) return { arr: this.localsOf(slot.script), index: slot.index };
+    return { arr: this.stack, index: slot.index };
   }
 
   /** Put a string on the kernel's heap and return its handle. */

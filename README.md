@@ -122,11 +122,10 @@ These are deliberate and stated rather than hidden:
   local variable from a script with no locals block; QFG1 dies in `Act::canBeHere`
   on a path that needs `BaseSetter`.
 - **The interpreter is partial.** It draws pictures and the cast, moves actors, takes
-  input, draws `Display` text, and opens windows with their controls, and games
-  progress through several screens. Dialogs appear but come up empty: the Print
-  machinery has not set a control's `text` by the time it is drawn, which is the next
-  thing to trace. Menus, the parser and save/restore are still stubs, so a game runs
-  and animates without being completable. KQ4 and QFG1 stop with an error during
+  input, draws text, and opens windows with their controls — LSL2 reaches its
+  copy-protection dialog with the prompt wrapped inside a message box and a working
+  edit field. Menus, the parser and save/restore are still stubs, so a game runs and
+  animates without being completable. KQ4 and QFG1 stop with an error during
   start-up; Iceman runs but has not drawn a picture by frame 300.
 - **The behavioural model is a hypothesis, not a proof.** A tested global is not
   necessarily a precondition — the scan covers a whole handler body, so tests in a
