@@ -69,6 +69,12 @@ SCI_GAMES=/path/to/games npm run test:vm    # interpreter sweep and boot
 Node 22.6+ is required: the sources are run directly with
 `--experimental-strip-types`, so there is no build step for the tests.
 
+## The format
+
+[`docs/sci0-format.md`](docs/sci0-format.md) is the reference this engine was built
+from: the container, the compression and why it has to be probed for, the pic opcodes,
+view cels, script objects, the bytecode, and the places the format misleads you.
+
 ## How this was built, and how far to trust it
 
 Most of the format work is checked against a separate Python reference
