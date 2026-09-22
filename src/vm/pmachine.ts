@@ -595,11 +595,7 @@ export class PMachine {
       const pi = p.fromSpecies === undefined ? p.target.indexOfSelector(sel) : -1;
       if (pi >= 0) {
         if (argc === 0) this.acc = p.target.props[pi];
-        else {
-          p.target.props[pi] = params[0];
-          const dbg = (globalThis as any).__propWatch;
-          if (dbg) dbg(p.target.name, this.index.selectorName(sel), params[0]);
-        }
+        else p.target.props[pi] = params[0];
         continue;
       }
       const found = p.fromSpecies !== undefined
@@ -1118,10 +1114,15 @@ export class PMachine {
           this.screen.frame(x - 1, y - 1, x + w + 3, bottom + 3, 0);
           if (font && text) this.screen.text(font, text, x + 1, y, selected ? 15 : 0);
         } else if (type === 3) {
-          // An edit field shows what has been typed, with a caret.
+          // An edit field shows what has been typed, with the caret
+          // where the cursor actually is rather than always at the end.
           if (font) {
-            const drawn = font ? this.screen.text(font, text, x, y, 0) : 0;
-            this.screen.fill(x + drawn, y, x + drawn + 1, y + 8, 0);
+            this.screen.text(font, text, x, y, 0);
+            const cur = Math.max(0, Math.min(text.length, this.prop(o, 'cursor', text.length)));
+            let cx = x;
+            for (let i = 0; i < cur; i++)
+              cx += font.chars[text.charCodeAt(i)]?.width ?? 0;
+            this.screen.fill(cx, y, cx + 1, y + Math.max(8, font.lineHeight), 0);
           }
         } else if (font && text) {
           this.drawText(font, text, x, y, 0, Math.max(8, w || (WIDTH - x)));
@@ -1129,10 +1130,55 @@ export class PMachine {
         return 0;
       }
 
+      /**
+       * EditControl(control, event).
+       *
+       * Typing into a text field.  Only an edit control has anything to
+       * do here, and only a keyboard event: the caller hands every
+       * control in the dialog the same event, so the ones that do not
+       * apply have to leave it alone rather than claim it.
+       *
+       * The text lives in the buffer a `lea` handle names, which is what
+       * the control's `text` property holds, so editing means rewriting
+       * that buffer -- not the property.
+       */
+      case 'EditControl': {
+        const ctl = this.resolveTarget(null, a0);
+        const ev = this.resolveTarget(null, a1);
+        if (!ctl || !ev) return 0;
+        if (this.prop(ctl, 'type') !== 3) return 0;
+        if (this.prop(ev, 'type') !== EV.keyboard) return 0;
+        const buf = this.prop(ctl, 'text');
+        if (!this.strings.has(buf)) return 0;
+        const max = this.prop(ctl, 'max', 40);
+        let text = this.strings.get(buf)!;
+        let cur = Math.max(0, Math.min(text.length, this.prop(ctl, 'cursor', text.length)));
+        const key = this.prop(ev, 'message');
+        let handled = true;
+        if (key === 8) {                                  // backspace
+          if (cur > 0) { text = text.slice(0, cur - 1) + text.slice(cur); cur--; }
+        } else if (key === 0x4B00) { if (cur > 0) cur--; }        // left
+        else if (key === 0x4D00) { if (cur < text.length) cur++; } // right
+        else if (key === 0x4700) { cur = 0; }                      // home
+        else if (key === 0x4F00) { cur = text.length; }            // end
+        else if (key === 0x5300) { text = text.slice(0, cur) + text.slice(cur + 1); }
+        else if (key >= 32 && key < 256) {
+          if (text.length < max) {
+            text = text.slice(0, cur) + String.fromCharCode(key) + text.slice(cur);
+            cur++;
+          }
+        } else handled = false;                 // enter and the rest are the dialog's
+        if (!handled) return 0;
+        this.strings.set(buf, text);
+        this.setProp(ctl, 'cursor', cur);
+        this.setProp(ev, 'claimed', 1);
+        return 1;
+      }
+
       case 'DisposeScript': case 'FlushResources': case 'MemoryInfo':
       case 'SetMenu': case 'AddMenu': case 'DrawMenuBar': case 'SetSynonyms':
       case 'GetSaveDir': case 'GetCWD': case 'DoSound':
-      case 'EditControl': case 'FileIO':
+      case 'FileIO':
       case 'FOpen': case 'FClose': case 'FGets': case 'FPuts':
         return 0;
 

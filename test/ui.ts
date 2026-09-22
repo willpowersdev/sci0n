@@ -25,7 +25,10 @@ class El {
   // pointer coordinates against.
   classList = { add() {}, remove() {} };
   disabled = false;
+  value = '';
   addEventListener() {}
+  focus() {}
+  blur() {}
   getBoundingClientRect() { return { left: 0, top: 0, width: 960, height: 684 }; }
   textContent = ''; className = ''; value = ''; hidden = false;
   width = 0; height = 0;
@@ -91,7 +94,8 @@ g.location = { search: `?game=${GAME}` };
 
 // The skeleton index.html declares, including #title inside #bar.
 for (const id of ['pick', 'gameinfo', 'tabs', 'list', 'bar', 'title',
-                  'controls', 'stage', 'cv', 'text', 'play', 'quit', 'hud']) {
+                  'controls', 'stage', 'cv', 'text', 'play', 'quit', 'hud',
+                  'dictate', 'mic']) {
   const e = new El(id === 'cv' ? 'canvas' : 'div'); e.id = id;
 }
 reg.get('bar')!.children.push(reg.get('title')!, reg.get('controls')!);

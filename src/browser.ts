@@ -238,16 +238,59 @@ function stopPlay() {
   ($('quit') as HTMLElement).hidden = true;
   ($('hud') as HTMLElement).hidden = true;
   window.removeEventListener('keydown', onPlayKey, true);
+  const field = $('dictate') as HTMLInputElement;
+  field.removeEventListener('input', onDictate);
+  field.blur();
+  field.hidden = true;
+  ($('mic') as HTMLElement).hidden = true;
+  cv.removeEventListener('mousedown', grabFocus);
   if (current) render();
 }
 
+/**
+ * Keys the game needs that are not characters.
+ *
+ * Printable characters are deliberately left alone here and picked up
+ * from the `input` event instead, because that is the only place
+ * dictated text appears -- macOS delivers it as an insertion, with no
+ * key events at all.  Handling both would type everything twice.
+ */
 function onPlayKey(e: KeyboardEvent) {
   if (!session) return;
   if (e.key === 'Escape' && e.shiftKey) { stopPlay(); return; }
+  if (e.metaKey) return;                     // leave the browser's own shortcuts alone
+  if (e.key.length === 1 && !e.ctrlKey && !e.altKey) return;   // the input event has it
   const m = keyMessage(e);
   if (m === null) return;
   e.preventDefault();
   session.key(m, (e.shiftKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.altKey ? 4 : 0));
+}
+
+/**
+ * Text arriving in the hidden field, by typing or by dictation.
+ *
+ * The field is emptied after every read, so whatever is in it is exactly
+ * what is new.  Dictation inserts a whole phrase at once, which becomes
+ * a run of keystrokes -- the game cannot tell the difference between
+ * that and somebody typing quickly.
+ */
+function onDictate() {
+  const el = $('dictate') as HTMLInputElement;
+  const text = el.value;
+  el.value = '';
+  if (!session || !text) return;
+  for (const ch of text) {
+    const code = ch.charCodeAt(0);
+    if (code >= 32 && code < 256) session.key(code);
+  }
+}
+
+/** Keep the hidden field focused, or dictation has nowhere to go. */
+function grabFocus() {
+  const el = $('dictate') as HTMLInputElement;
+  el.hidden = false;
+  el.value = '';
+  el.focus({ preventScroll: true });
 }
 
 /**
@@ -264,11 +307,18 @@ function startPlay() {
   const s = new Session(game, index ?? undefined);
   if (!s.ready) { $('gameinfo').textContent = 'this game exposes no entry point'; return; }
   session = s;
+  (globalThis as { __lastSession?: Session }).__lastSession = s;
   document.body.classList.add('play');
   stageMode(false);
   ($('quit') as HTMLElement).hidden = false;
   ($('hud') as HTMLElement).hidden = false;
   window.addEventListener('keydown', onPlayKey, true);
+  const field = $('dictate') as HTMLInputElement;
+  field.addEventListener('input', onDictate);
+  ($('mic') as HTMLElement).hidden = false;
+  grabFocus();
+  // Clicking the picture must not take focus away from the field.
+  cv.addEventListener('mousedown', grabFocus);
 
   const rgb = new Uint8Array(WIDTH * SCREEN_HEIGHT * 3);
   const frame = () => {
@@ -279,7 +329,8 @@ function startPlay() {
     $('hud').textContent =
       `${st.frames} frames · ${(st.instructions / 1e6).toFixed(1)}M instructions` +
       `${st.picture >= 0 ? ` · picture ${st.picture}` : ''}` +
-      (st.running ? '  ·  shift-esc to leave' : `  ·  stopped: ${st.stopped ?? ''}`);
+      (st.running ? '  ·  shift-esc to leave  ·  fn fn to dictate'
+                  : `  ·  stopped: ${st.stopped ?? ''}`);
     if (st.running) raf = requestAnimationFrame(frame);
   };
   raf = requestAnimationFrame(frame);
@@ -1083,6 +1134,15 @@ function adopt(g: Game) {
 }
 
 ($('quit') as HTMLButtonElement).onclick = stopPlay;
+// There is no way to observe the fn key from a page, so the button does
+// what it can: it puts the cursor where dictation will land and says so.
+($('mic') as HTMLButtonElement).onclick = () => {
+  grabFocus();
+  const b = $('mic');
+  b.classList.add('on');
+  b.textContent = '🎤 press fn twice';
+  setTimeout(() => { b.classList.remove('on'); b.textContent = '🎤 dictation'; }, 4000);
+};
 ($('play') as HTMLButtonElement).onclick = startPlay;
 // The canvas is scaled and aspect-corrected, so a click has to be mapped
 // back to the 320x190 the game thinks it is drawing on.

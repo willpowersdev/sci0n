@@ -51,6 +51,12 @@
   #quit:hover{opacity:1}
   #hud{position:fixed;bottom:6px;left:10px;z-index:5;color:var(--dim);
        font:11px ui-monospace,Menlo,monospace;opacity:.5}
+  /* Focused but invisible: it exists to catch typing and dictation. */
+  #dictate{position:fixed;top:0;left:0;width:2px;height:2px;opacity:0;
+           border:0;padding:0;z-index:1}
+  #mic{position:fixed;top:8px;right:60px;z-index:5;opacity:.25}
+  #mic:hover{opacity:1}
+  #mic.on{opacity:1;border-color:var(--accent);color:var(--accent)}
 </style>
 <div id="side">
   <header>
@@ -67,6 +73,14 @@
   <div id="bar"><span class="dim" id="title">nothing loaded</span><span id="controls"></span></div>
   <div id="stage"><canvas id="cv" width="960" height="684"></canvas><pre id="text" hidden></pre></div>
 </div>
+<!--
+  Dictation needs somewhere to dictate into.  macOS inserts recognised
+  text into whatever editable element has focus, and a canvas is not one,
+  so playing keeps this input focused and invisible over the picture; the
+  characters it receives are forwarded to the game as keystrokes.
+-->
+<input id="dictate" hidden autocomplete="off" autocapitalize="off" spellcheck="false">
+<button id="mic" hidden title="put the cursor in the dictation field, then press fn twice">🎤 dictation</button>
 <button id="quit" hidden>exit</button>
 <div id="hud" hidden></div>
 <div style="display:none">

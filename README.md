@@ -41,6 +41,13 @@ priority-tested against the pic so sprites sit behind the scenery they should. A
 has an **undither** toggle that merges the dither pairs the game's backgrounds also
 use. Both work alongside the existing visual/undithered/priority/control modes.
 
+**Dictation.** A page cannot see the fn key, so the hook is the other half of what
+macOS needs: playing keeps a focused, invisible text field over the picture, and
+dictated text inserted into it is forwarded to the game as keystrokes. Press fn twice
+as usual. Typed characters come through the same path — the `input` event is the only
+place dictated text appears, since macOS delivers it as an insertion with no key
+events at all, so handling both would type everything twice.
+
 **▶ Play this game** runs the interpreter itself: the VM executes a slice per
 displayed frame, draws the cast over the picture with the priority test that beds
 sprites into scenery, and takes keyboard and mouse input. Shift-Escape leaves.
@@ -125,7 +132,9 @@ These are deliberate and stated rather than hidden:
   input, draws text, and opens windows with their controls — LSL2 reaches its
   copy-protection dialog with the prompt wrapped inside a message box and a working
   edit field. Menus, the parser and save/restore are still stubs, so a game runs and
-  animates without being completable. KQ4 and QFG1 stop with an error during
+  animates without being completable. Keystrokes reach the game — `GetEvent` delivers
+  them — but the dialogs do not yet route them to their edit field, so the
+  copy-protection prompt cannot be answered. KQ4 and QFG1 stop with an error during
   start-up; Iceman runs but has not drawn a picture by frame 300.
 - **The behavioural model is a hypothesis, not a proof.** A tested global is not
   necessarily a precondition — the scan covers a whole handler body, so tests in a
