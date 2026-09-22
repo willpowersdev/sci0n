@@ -1,0 +1,42 @@
+{
+ "CAMELOT": {
+  "chars": 332520,
+  "digest": "0c6354727e20e442",
+  "resources": 190
+ },
+ "COLONEL": {
+  "chars": 328350,
+  "digest": "64433488b251f239",
+  "resources": 227
+ },
+ "HERO": {
+  "chars": 257612,
+  "digest": "8f3173d068514316",
+  "resources": 191
+ },
+ "ICE": {
+  "chars": 132779,
+  "digest": "425d16d6068e87fb",
+  "resources": 165
+ },
+ "KQ4": {
+  "chars": 136379,
+  "digest": "5d11f01fa5312578",
+  "resources": 139
+ },
+ "LSL2": {
+  "chars": 156179,
+  "digest": "b6db1937f42d0dfc",
+  "resources": 109
+ },
+ "QFG2": {
+  "chars": 367880,
+  "digest": "c5694ad3eda69f71",
+  "resources": 178
+ },
+ "SQ3": {
+  "chars": 104684,
+  "digest": "1cd86a57307b54c6",
+  "resources": 96
+ }
+}

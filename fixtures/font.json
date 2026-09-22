@@ -1,0 +1,66 @@
+{
+ "CAMELOT": {
+  "cursor_digest": "dc324556775abda9",
+  "cursor_opaque": 247,
+  "cursors": 2,
+  "font_digest": "c39e33d3bc23613a",
+  "fonts": 8,
+  "glyphs": 1024
+ },
+ "COLONEL": {
+  "cursor_digest": "6ac783015a1dc9c1",
+  "cursor_opaque": 234,
+  "cursors": 3,
+  "font_digest": "29452ef56e80f06d",
+  "fonts": 8,
+  "glyphs": 1024
+ },
+ "HERO": {
+  "cursor_digest": "f3503b3f6ba118f5",
+  "cursor_opaque": 510,
+  "cursors": 3,
+  "font_digest": "af644e485ff56ab2",
+  "fonts": 3,
+  "glyphs": 384
+ },
+ "ICE": {
+  "cursor_digest": "c4960dce9dae74eb",
+  "cursor_opaque": 286,
+  "cursors": 3,
+  "font_digest": "9d5cc0a2f3c26f9a",
+  "fonts": 9,
+  "glyphs": 1152
+ },
+ "KQ4": {
+  "cursor_digest": "27b490130333d6c8",
+  "cursor_opaque": 279,
+  "cursors": 2,
+  "font_digest": "41c6a999af6ecbfd",
+  "fonts": 4,
+  "glyphs": 512
+ },
+ "LSL2": {
+  "cursor_digest": "beb0625adc6f80e3",
+  "cursor_opaque": 285,
+  "cursors": 2,
+  "font_digest": "be2d636b3b2791ee",
+  "fonts": 5,
+  "glyphs": 640
+ },
+ "QFG2": {
+  "cursor_digest": "7a0df4858af9d7be",
+  "cursor_opaque": 592,
+  "cursors": 6,
+  "font_digest": "84b801d3368113c3",
+  "fonts": 4,
+  "glyphs": 512
+ },
+ "SQ3": {
+  "cursor_digest": "46036b16b1e202ba",
+  "cursor_opaque": 263,
+  "cursors": 3,
+  "font_digest": "480b6d28ab01621e",
+  "fonts": 10,
+  "glyphs": 1280
+ }
+}

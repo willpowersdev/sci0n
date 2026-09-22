@@ -1,0 +1,52 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>SCI0 Explorer</title>
+<style>
+  :root{--bg:#14141a;--panel:#1c1c24;--line:#31313d;--fg:#d6d6e0;--dim:#8a8a9a;--accent:#7fd1ff}
+  *{box-sizing:border-box}
+  body{margin:0;font:13px/1.5 ui-monospace,Menlo,monospace;background:var(--bg);color:var(--fg);
+       display:grid;grid-template-columns:300px 1fr;height:100vh}
+  #side{border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+  header{padding:12px;border-bottom:1px solid var(--line)}
+  h1{font-size:14px;margin:0 0 8px}
+  #tabs{display:flex;gap:4px;flex-wrap:wrap;padding:8px 12px;border-bottom:1px solid var(--line)}
+  .tab{padding:3px 9px;border:1px solid var(--line);border-radius:4px;cursor:pointer;color:var(--dim)}
+  .tab.on{background:var(--accent);color:#08080c;border-color:var(--accent)}
+  #list{overflow:auto;flex:1;min-height:0}
+  .row{padding:4px 12px;cursor:pointer;white-space:nowrap}
+  .row:hover{background:#25252f}
+  .row.on{background:var(--accent);color:#08080c}
+  #main{display:flex;flex-direction:column;min-width:0;min-height:0}
+  #bar{padding:10px 14px;border-bottom:1px solid var(--line);display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+  #controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  #stage{flex:1;display:grid;place-items:center;overflow:auto;padding:16px;min-height:0}
+  /* Text viewers want the whole width, top-aligned, not centred like a canvas. */
+  #stage.text{place-items:start stretch}
+  #text{margin:0;font:inherit;white-space:pre;tab-size:4}
+  #text .k{color:var(--accent)}
+  #text .c{color:var(--dim)}
+  #text .s{color:#c5e8a0}
+  #text .h{color:#e8c07a}
+  #text b{color:#fff;font-weight:600}
+  canvas{image-rendering:pixelated;background:#000;box-shadow:0 0 0 1px var(--line)}
+  button,select{font:inherit;background:var(--panel);color:var(--fg);border:1px solid var(--line);
+                border-radius:4px;padding:3px 8px}
+  button:hover{border-color:var(--accent)}
+  .dim{color:var(--dim)}
+  input[type=file]{font:inherit;color:var(--dim);width:100%}
+</style>
+<div id="side">
+  <header>
+    <h1>SCI0 Explorer</h1>
+    <input id="pick" type="file" webkitdirectory directory multiple>
+    <div class="dim" id="gameinfo" style="margin-top:8px">Choose a game folder</div>
+  </header>
+  <div id="tabs"></div>
+  <div id="list"></div>
+</div>
+<div id="main">
+  <!-- #title is permanent; #controls is the part each viewer rebuilds. -->
+  <div id="bar"><span class="dim" id="title">nothing loaded</span><span id="controls"></span></div>
+  <div id="stage"><canvas id="cv" width="960" height="684"></canvas><pre id="text" hidden></pre></div>
+</div>
+<script type="module" src="./dist/app.js"></script>
