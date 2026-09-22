@@ -33,8 +33,9 @@ npm install
 SCI_GAMES=/path/to/games npm run serve      # then open http://localhost:8017
 ```
 
-`/?game=SQ3` loads a game directly; `/?game=` lists what it can see. There is also
-a directory picker for browsing without the server route.
+Opening it lists the games it can see and you click one. `/?game=SQ3` still loads one
+directly. There is also a directory picker for a copy the server cannot reach, which
+is the only way in when the page is opened from a file rather than served.
 
 A picture has a **sprites** toggle that composites the props its room script stages,
 priority-tested against the pic so sprites sit behind the scenery they should. A view

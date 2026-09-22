@@ -1173,22 +1173,53 @@ cv.addEventListener('mousedown', (e) => {
   adopt(game);
 };
 
-// `/?game=NAME` loads straight from the server; `/?game=` lists what is there.
-(async () => {
-  const q = new URLSearchParams(location.search);
-  if (!q.has('game')) return;
-  const name = q.get('game') ?? '';
+/** Load one game from the server and show it. */
+async function openGame(name: string) {
+  $('gameinfo').textContent = `loading ${name}…`;
   try {
-    if (!name) {
-      const all: string[] = await (await fetch('/games/')).json();
-      $('gameinfo').innerHTML = 'available: ' + all.map(n =>
-        `<a href="?game=${encodeURIComponent(n)}" style="color:var(--accent)">${n}</a>`).join(' · ');
-      return;
-    }
-    $('gameinfo').textContent = `loading ${name}…`;
     adopt(new Game(await sourceFromServer(name)));
     document.title = `SCI0 Explorer — ${name}`;
+    history.replaceState(null, '', `?game=${encodeURIComponent(name)}`);
   } catch (err: any) {
     $('gameinfo').textContent = `could not load ${name}: ${err.message}`;
   }
+}
+
+/**
+ * What to show before a game is chosen.
+ *
+ * The server knows which of its folders are games, so the page asks and
+ * offers them: requiring `?game=NAME` to be typed by hand made a page
+ * that is serving fifteen of them look like it had none. The directory
+ * picker stays for browsing a copy the server cannot see, and is the
+ * only option when the page is opened from a file rather than served.
+ */
+async function showGameList() {
+  let games: string[] = [];
+  try {
+    const r = await fetch('/games/');
+    if (r.ok) games = await r.json();
+  } catch { /* opened without the server; the picker is the way in */ }
+  if (!games.length) {
+    $('gameinfo').textContent = 'Choose a game folder';
+    return;
+  }
+  $('gameinfo').textContent = `${games.length} games on this machine — pick one, ` +
+    `or use the chooser above for another copy`;
+  const list = $('list');
+  list.innerHTML = '';
+  for (const name of games) {
+    const d = document.createElement('div');
+    d.className = 'row';
+    d.textContent = name;
+    d.onclick = () => openGame(name);
+    list.append(d);
+  }
+}
+
+(async () => {
+  const q = new URLSearchParams(location.search);
+  const name = q.get('game');
+  if (name) await openGame(name);
+  else await showGameList();
 })();

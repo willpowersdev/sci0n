@@ -27,6 +27,25 @@ createServer(async (req, res) => {
       const st = await stat(path);
       if (st.isDirectory()) {
         const names = await readdir(path);
+        // The top-level listing answers "which of these are games", which
+        // is a question only the server can answer cheaply: a directory
+        // holding a RESOURCE.MAP is one, and anything else on the way --
+        // .DS_Store, stray folders -- is not worth offering.
+        // join() leaves the trailing slash of "/games/" on the path, so
+        // compare without it rather than against the bare directory.
+        if (path.replace(/\/+$/, '') === GAMES) {
+          const games = [];
+          for (const n of names.sort()) {
+            if (n.startsWith('.')) continue;
+            try {
+              const inner = await readdir(join(GAMES, n));
+              if (inner.some(f => /^RESOURCE\.MAP$/i.test(f))) games.push(n);
+            } catch { /* not a directory */ }
+          }
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify(games));
+          return;
+        }
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify(names));
         return;
