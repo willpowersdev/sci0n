@@ -23,6 +23,7 @@ the games. Point `SCI_GAMES` at a directory holding one folder per game.
 | Imaging | Cel undithering (ScummVM's cross-check) and MLAA |
 | Scenes | 754 rooms composited from static props, 2,709 sprites placed |
 | Analysis | Room graph, room links, a per-room behavioural model over 17,058 Said handlers, and a planner over it |
+| Export | PNG from any image tab; animated GIF for a view's loop |
 
 ## Running it
 
@@ -33,6 +34,13 @@ SCI_GAMES=/path/to/games npm run serve      # then open http://localhost:8017
 
 `/?game=SQ3` loads a game directly; `/?game=` lists what it can see. There is also
 a directory picker for browsing without the server route.
+
+Pictures, views, fonts and cursors each have a **PNG** button, which saves the image
+as displayed — at view scale, with the 1.2 aspect correction that makes SCI art look
+right on square pixels. A view also has a **GIF** button that exports the selected
+loop as a looping animation at native size, with the cels aligned by their
+displacements so the sprite stays registered against itself rather than jittering
+inside per-cel bounding boxes.
 
 ```sh
 SCI_GAMES=/path/to/games npm test           # twelve differential suites
@@ -61,6 +69,9 @@ do not depend on the reference agreeing:
 
 - Every glyph's bytes must end exactly where the next glyph begins (the wrong
   order gives 2,066 overruns).
+- The GIF encoder is checked by decoding its own output back to the exact pixels with
+  an independently written reader, including a case large enough to fill the LZW
+  dictionary and force a table reset.
 - The disassembler's mnemonics are compared against **vocab.998, the interpreter's
   own opcode table** — 512 entries across 8 games, 0 mismatches.
 - The AdLib patch format is taken from **ADL.DRV, the driver Sierra shipped**, by

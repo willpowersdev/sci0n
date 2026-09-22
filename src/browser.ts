@@ -4,7 +4,7 @@
  * No game data ships with this -- the user points it at their own copy.
  */
 import { Game, TYPE_NAMES, type ResourceSource } from './resources.ts';
-import { View } from './view.ts';
+import { View, type Cel } from './view.ts';
 import { Picture, WIDTH, HEIGHT } from './pic.ts';
 import { EGA_RGB, BLENDED_RGB, ditherPixel } from './ega.ts';
 import { Script, Index, s16 } from './script.ts';
@@ -19,6 +19,7 @@ import { parseSound, detectHeaderSize, DEVICE_ADLIB } from './sound.ts';
 import { parseBank, type Instrument } from './opl/patch.ts';
 import { Player, resample, TICKS_PER_SECOND } from './opl/player.ts';
 import { OPL_RATE } from './opl/opl2.ts';
+import { encodeGIF, type Frame } from './gif.ts';
 
 const SCALE = 3, ASPECT = 1.2;
 /**
@@ -50,6 +51,8 @@ let kind = 'pic';
 let current: { type: number; num: number } | null = null;
 let mode: 'visual' | 'undithered' | 'priority' | 'control' = 'visual';
 let anim: number | null = null;
+/** Preview frame time; the exported GIF uses the same. */
+const ANIM_MS = 140;
 
 /** A ResourceSource backed by the files the user selected. */
 async function sourceFromFiles(files: FileList): Promise<ResourceSource> {
@@ -112,6 +115,33 @@ function undithered(vis: Uint8Array): Uint8Array {
 }
 
 function stopAnim() { if (anim !== null) { clearInterval(anim); anim = null; } }
+
+/** Hand the browser a file to save, and let go of the object URL after. */
+function download(name: string, blob: Blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a') as HTMLAnchorElement;
+  a.href = url; a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+/**
+ * A button that saves the canvas.
+ *
+ * The canvas already holds the picture at display scale with the 1.2
+ * aspect correction applied, which is what makes SCI art look right on a
+ * square-pixel screen -- so that is what gets written, rather than the
+ * raw indexed buffer, and the file matches what is on screen.
+ */
+function pngButton(name: string) {
+  const b = document.createElement('button');
+  b.textContent = 'PNG';
+  b.title = 'save this image as it appears, at display scale';
+  b.onclick = () => {
+    (cv as HTMLCanvasElement).toBlob(blob => { if (blob) download(`${name}.png`, blob); }, 'image/png');
+  };
+  return b;
+}
 
 const esc = (t: string) => t.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!));
 const hex = (n: number, w = 4) => n.toString(16).padStart(w, '0');
@@ -202,6 +232,7 @@ function showFont(num: number) {
   });
   blit(rgb, w, h);
   $('controls').innerHTML = '';
+  $('controls').append(pngButton(`font${num}`));
   $('controls').insertAdjacentHTML('beforeend',
     `<span class="dim">font ${num} · ${f.chars.length} glyphs · line height ${f.lineHeight}` +
     ` · widest ${cw}px · tallest ${chh}px</span>`);
@@ -244,6 +275,7 @@ function showCursor(num: number) {
   blit(rgb, N, N);
   const lit = [...c.pixels].filter(v => v !== CURSOR_CLEAR).length;
   $('controls').innerHTML = '';
+  $('controls').append(pngButton(`cursor${num}`));
   $('controls').insertAdjacentHTML('beforeend',
     `<span class="dim">cursor ${num} · ${N}×${N} · hotspot ${hx},${hy} ` +
     `(marked red) · ${lit} opaque pixels</span>`);
@@ -631,9 +663,53 @@ function showPic(num: number) {
     if (m === mode) b.style.borderColor = 'var(--accent)';
     $('controls').append(b);
   }
+  $('controls').append(pngButton(`pic${num}_${mode}`));
   const bands = p.priorityBands ? ` · bands ${p.priorityBands.join(',')}` : '';
   $('controls').insertAdjacentHTML('beforeend',
     `<span class="dim">pic ${num} · ${p.ops} opcodes · ${WIDTH}×${HEIGHT}${bands}</span>`);
+}
+
+/**
+ * Lay a loop's cels out in one frame, aligned by their displacements.
+ *
+ * Cels in a loop are different sizes and carry their own displacement,
+ * so packing each into its own bounding box makes a walk cycle jitter.
+ * Placing them the way the engine does -- (x, y) is the bottom centre,
+ * displaceX signed and negated when the loop is mirrored, displaceY
+ * unsigned -- and taking the union of the results keeps the sprite
+ * registered against itself across the whole loop.
+ */
+function loopFrames(cels: Cel[], delayCs: number):
+    { width: number; height: number; frames: Frame[]; key: number } | null {
+  if (!cels.length) return null;
+  const place = (c: Cel) => {
+    const dx = c.mirrored ? -c.xShift : c.xShift;
+    const dy = c.yShift >= 0 ? c.yShift : c.yShift + 256;
+    const left = dx - (c.width >> 1);
+    const bottom = dy + 1;
+    return { left, top: bottom - c.height };
+  };
+  const boxes = cels.map(place);
+  const x0 = Math.min(...boxes.map(b => b.left));
+  const y0 = Math.min(...boxes.map(b => b.top));
+  const x1 = Math.max(...cels.map((c, i) => boxes[i].left + c.width));
+  const y1 = Math.max(...cels.map((c, i) => boxes[i].top + c.height));
+  const width = Math.max(1, x1 - x0), height = Math.max(1, y1 - y0);
+  // One transparent index for the whole file, clear of the 16 colours.
+  const key = 16;
+  const frames: Frame[] = cels.map((c, i) => {
+    const px = new Uint8Array(width * height).fill(key);
+    const ox = boxes[i].left - x0, oy = boxes[i].top - y0;
+    for (let y = 0; y < c.height; y++) {
+      for (let x = 0; x < c.width; x++) {
+        const v = c.pixels[y * c.width + x];
+        if (v === c.key) continue;
+        px[(oy + y) * width + ox + x] = v & 0x0F;
+      }
+    }
+    return { pixels: px, delayCs, transparent: key };
+  });
+  return { width, height, frames, key };
 }
 
 function showView(num: number) {
@@ -665,9 +741,23 @@ function showView(num: number) {
   play.onclick = () => {
     if (anim !== null) { stopAnim(); play.textContent = 'play'; return; }
     play.textContent = 'stop';
-    anim = window.setInterval(() => { frame++; draw(); }, 140);
+    anim = window.setInterval(() => { frame++; draw(); }, ANIM_MS);
   };
-  $('controls').append(sel, play);
+  const gif = document.createElement('button');
+  gif.textContent = 'GIF';
+  gif.title = 'save this loop as an animated GIF at native size';
+  gif.onclick = () => {
+    const cels = v.loops[loop] ?? [];
+    const laid = loopFrames(cels, Math.round(ANIM_MS / 10));
+    if (!laid) return;
+    // 17 entries: the sixteen EGA colours plus one transparent slot.
+    const palette = [...EGA_RGB, [0, 0, 0] as [number, number, number]];
+    const bytes = encodeGIF({ width: laid.width, height: laid.height,
+                              palette, frames: laid.frames });
+    download(`view${num}_loop${loop}.gif`,
+             new Blob([bytes as BlobPart], { type: 'image/gif' }));
+  };
+  $('controls').append(sel, play, pngButton(`view${num}_loop${loop}_cel${frame}`), gif);
   $('controls').insertAdjacentHTML('beforeend',
     `<span class="dim">view ${num} · ${v.loops.length} loops · mirror 0x${v.mirrorMask.toString(16)}</span>`);
   draw();
