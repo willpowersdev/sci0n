@@ -37,8 +37,28 @@ export class Session {
    * game still waits exactly as long as it thinks it does, there is just
    * less of our time in each of its ticks.
    */
-  cyclesPerSecond = 20;
-  private get ticksPerSecond() { return this.cyclesPerSecond * this.vm.minWait; }
+  private rate = 20;
+  get cyclesPerSecond() { return this.rate; }
+  /**
+   * Changing the rate rebases the clock's origin.
+   *
+   * Ticks due are counted from the start of the session at the current
+   * rate, so a rate that drops leaves the count already issued far ahead
+   * of what the new rate says is due -- and the game's clock then stands
+   * still until real time catches up with it.  Coming back to 20 cps
+   * after twenty seconds of skipping an intro froze it for ten minutes:
+   * `Wait` never returned, so the game never polled, and every key the
+   * player pressed queued up unread.  Measuring from here instead keeps
+   * the ticks already issued and owes nothing for time spent at the old
+   * rate.
+   */
+  set cyclesPerSecond(v: number) {
+    if (v === this.rate) return;
+    this.rate = v;
+    this.started_at = 0;
+    this.ticksIssued = 0;
+  }
+  private get ticksPerSecond() { return this.rate * this.vm.minWait; }
   instructions = 0;
   frames = 0;
   /**
