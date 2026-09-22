@@ -35,7 +35,17 @@ createServer(async (req, res) => {
   }
   try {
     const body = await readFile(path);
-    res.writeHead(200, { 'content-type': TYPES[extname(path)] ?? 'application/octet-stream' });
+    res.writeHead(200, {
+      'content-type': TYPES[extname(path)] ?? 'application/octet-stream',
+      // With no cache headers at all a browser falls back to heuristic
+      // caching and will happily serve a stale bundle after a rebuild,
+      // which looks exactly like a feature that was never added.  The
+      // game files are large and never change, so only the app's own
+      // files are marked uncacheable.
+      ...(base === GAMES
+        ? { 'cache-control': 'public, max-age=3600' }
+        : { 'cache-control': 'no-store, must-revalidate' }),
+    });
     res.end(body);
   } catch { res.writeHead(404).end('not found'); }
 }).listen(8017, () => console.log('serving http://localhost:8017'));

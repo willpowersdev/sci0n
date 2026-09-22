@@ -167,8 +167,16 @@ export class Scene {
     return [drawn, [left, top, left + cel.width, bottom]];
   }
 
-  /** RGB bytes of the populated room. */
+  /**
+   * RGB bytes of the populated room.
+   *
+   * The report arrays are cleared first so a second call describes that
+   * call: rendering twice used to append to them and double every count.
+   */
   render(exclude: ReadonlySet<string> = new Set()): Uint8Array {
+    this.placed = [];
+    this.skipped = [];
+    this.unditherStats = { cels: 0, combinations: 0 };
     let buf: Uint8Array;
     if (this.undither) {
       this.picHist = picHistogram(this.pic);

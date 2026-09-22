@@ -35,6 +35,11 @@ SCI_GAMES=/path/to/games npm run serve      # then open http://localhost:8017
 `/?game=SQ3` loads a game directly; `/?game=` lists what it can see. There is also
 a directory picker for browsing without the server route.
 
+A picture has a **sprites** toggle that composites the props its room script stages,
+priority-tested against the pic so sprites sit behind the scenery they should. A view
+has an **undither** toggle that merges the dither pairs the game's backgrounds also
+use. Both work alongside the existing visual/undithered/priority/control modes.
+
 Pictures, views, fonts and cursors each have a **PNG** button, which saves the image
 as displayed — at view scale, with the 1.2 aspect correction that makes SCI art look
 right on square pixels. A view also has a **GIF** button that exports the selected

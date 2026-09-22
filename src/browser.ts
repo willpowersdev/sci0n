@@ -20,6 +20,9 @@ import { parseBank, type Instrument } from './opl/patch.ts';
 import { Player, resample, TICKS_PER_SECOND } from './opl/player.ts';
 import { OPL_RATE } from './opl/opl2.ts';
 import { encodeGIF, type Frame } from './gif.ts';
+import { Scene } from './scene.ts';
+import { picHistogram, unditherCel } from './undither.ts';
+import * as RG from './roomgraph.ts';
 
 const SCALE = 3, ASPECT = 1.2;
 /**
@@ -44,6 +47,12 @@ let index: Index | null = null;
 let groups: Map<number, string[]> | null = null;
 /** AdLib instrument bank, read once per game. */
 let bank: Instrument[] | null = null;
+/** Which room scripts stage each picture, for the sprite overlay. */
+let picToScript: Map<number, number[]> | null = null;
+/** Pooled dither histogram of every background, built on first use. */
+let picHist: Int32Array | null = null;
+let showSprites = false;
+let viewUndither = false;
 let soundHeader = -1;
 let audio: AudioContext | null = null;
 let playing: AudioBufferSourceNode | null = null;
@@ -115,6 +124,84 @@ function undithered(vis: Uint8Array): Uint8Array {
 }
 
 function stopAnim() { if (anim !== null) { clearInterval(anim); anim = null; } }
+
+/**
+ * Picture number -> every room script that stages it.
+ *
+ * Built once per game, and only when the sprite overlay is first asked
+ * for, since it means parsing every script.  All candidates are kept
+ * rather than the lowest-numbered one: several rooms routinely share a
+ * background, and the first by number is often the one that places
+ * nothing -- QFG2's picture 2 belongs to script 98, which stages no
+ * props, and to script 822, which stages fifty-three.
+ */
+function scriptsForPicture(num: number): number[] {
+  if (!picToScript) {
+    picToScript = new Map();
+    if (index) {
+      for (const [scriptNo, room] of RG.collect(game!, index)) {
+        if (room.picture === undefined || room.picture === 0 || room.picture === 0xFFFF) continue;
+        const l = picToScript.get(room.picture);
+        if (l) l.push(scriptNo); else picToScript.set(room.picture, [scriptNo]);
+      }
+      for (const l of picToScript.values()) l.sort((a, b) => a - b);
+    }
+  }
+  return picToScript.get(num) ?? [];
+}
+
+/**
+ * The staged room for a picture: the first candidate that places
+ * anything.  The rendered buffer is carried along rather than rendered
+ * again by the caller, which would cost a second composite for nothing.
+ */
+interface Staged { rgb: Uint8Array; placed: number; skipped: number; script: number }
+function stageFor(num: number, undither: boolean): Staged | null {
+  let fallback: Staged | null = null;
+  for (const scriptNo of scriptsForPicture(num)) {
+    try {
+      const scene = new Scene(game!, index!, scriptNo, { undither });
+      const rgb = scene.render();
+      const got: Staged = { rgb, placed: scene.placed.length,
+                            skipped: scene.skipped.length, script: scriptNo };
+      if (got.placed) return got;
+      fallback ??= got;
+    } catch { /* not a room after all */ }
+  }
+  return fallback;
+}
+
+/**
+ * How often each dither pair appears across the game's backgrounds.
+ *
+ * Cel undithering only merges a combination the *backgrounds* also
+ * dithered with, which is what stops it eating deliberate chequerboard
+ * texture on a sprite.  One picture is not enough evidence -- most games
+ * merge nothing at all from a single histogram -- so this pools every
+ * pic in the game, once, the first time it is needed.
+ */
+function backgroundHistogram(): Int32Array {
+  if (picHist) return picHist;
+  const hist = new Int32Array(256);
+  for (const r of game!.byType('pic')) {
+    try {
+      const h = picHistogram(new Picture(game!.data(1, r.number)));
+      for (let i = 0; i < 256; i++) hist[i] += h[i];
+    } catch { /* a pic that will not decode contributes nothing */ }
+  }
+  picHist = hist;
+  return hist;
+}
+
+/** A button that toggles a flag and redraws. */
+function toggle(label: string, on: boolean, title: string, fn: () => void) {
+  const b = document.createElement('button');
+  b.textContent = label;
+  b.title = title;
+  if (on) b.style.borderColor = 'var(--accent)';
+  b.onclick = fn;
+  return b;
+}
 
 /** Hand the browser a file to save, and let go of the object URL after. */
 function download(name: string, blob: Blob) {
@@ -651,10 +738,22 @@ function showPic(num: number) {
   stopAnim();
   stageMode(false);
   const p = new Picture(game!.data(1, num));
-  const rgb = mode === 'priority' ? planeRGB(p.priority)
-            : mode === 'control' ? planeRGB(p.control)
-            : mode === 'undithered' ? undithered(p.visual)
-            : p.visualRGB();
+  const flat = mode === 'visual' || mode === 'undithered';
+  let rgb: Uint8Array;
+  let staged: { placed: number; skipped: number; script: number } | null = null;
+  // Sprites only mean anything over the visual planes; priority and
+  // control are the data that decides where sprites go, not a picture to
+  // put them on.
+  const stage = showSprites && flat ? stageFor(num, mode === 'undithered') : null;
+  if (stage) {
+    rgb = stage.rgb;
+    staged = { placed: stage.placed, skipped: stage.skipped, script: stage.script };
+  } else {
+    rgb = mode === 'priority' ? planeRGB(p.priority)
+        : mode === 'control' ? planeRGB(p.control)
+        : mode === 'undithered' ? undithered(p.visual)
+        : p.visualRGB();
+  }
   blit(rgb, WIDTH, HEIGHT);
   $('controls').innerHTML = '';
   for (const m of ['visual', 'undithered', 'priority', 'control'] as const) {
@@ -663,10 +762,21 @@ function showPic(num: number) {
     if (m === mode) b.style.borderColor = 'var(--accent)';
     $('controls').append(b);
   }
-  $('controls').append(pngButton(`pic${num}_${mode}`));
+  if (flat) {
+    const rooms = scriptsForPicture(num);
+    $('controls').append(toggle('sprites', showSprites,
+      rooms.length ? `composite the props staged by script ${rooms.join(' or ')}`
+                   : 'no room script stages this picture',
+      () => { showSprites = !showSprites; showPic(num); }));
+  }
+  $('controls').append(pngButton(`pic${num}_${mode}${staged ? '_scene' : ''}`));
   const bands = p.priorityBands ? ` · bands ${p.priorityBands.join(',')}` : '';
+  const note = staged
+    ? ` · script ${staged.script}: ${staged.placed} sprites placed` +
+      (staged.skipped ? `, ${staged.skipped} skipped` : '')
+    : (showSprites && flat ? ' · no room stages this picture' : '');
   $('controls').insertAdjacentHTML('beforeend',
-    `<span class="dim">pic ${num} · ${p.ops} opcodes · ${WIDTH}×${HEIGHT}${bands}</span>`);
+    `<span class="dim">pic ${num} · ${p.ops} opcodes · ${WIDTH}×${HEIGHT}${bands}${note}</span>`);
 }
 
 /**
@@ -716,6 +826,15 @@ function showView(num: number) {
   stopAnim();
   stageMode(false);
   const v = new View(game!.data(0, num));
+  // Undithering rewrites cel pixels in place, so it is applied once to
+  // this freshly decoded View rather than on every redraw -- a merged
+  // pixel holds a pair byte, and running the detector over its own
+  // output again would be reading something it did not produce.
+  let merged = 0;
+  if (viewUndither) {
+    const hist = backgroundHistogram();
+    for (const l of v.loops) for (const c of l) merged += unditherCel(c, hist);
+  }
   let loop = 0, frame = 0;
   const draw = () => {
     const cels = v.loops[loop] ?? [];
@@ -726,7 +845,9 @@ function showView(num: number) {
     for (let i = 0; i < c.width * c.height; i++) {
       const px = c.pixels[i];
       if (px === c.key) continue;
-      const col = EGA_RGB[px & 0x0F];
+      // Undithering leaves a colour *pair* behind (>= 0x10), which is
+      // blended, while a plain index is one of the sixteen.
+      const col = px < 16 ? EGA_RGB[px] : BLENDED_RGB[px];
       rgb[i * 3] = col[0]; rgb[i * 3 + 1] = col[1]; rgb[i * 3 + 2] = col[2];
       alpha[i] = 255;
     }
@@ -757,9 +878,14 @@ function showView(num: number) {
     download(`view${num}_loop${loop}.gif`,
              new Blob([bytes as BlobPart], { type: 'image/gif' }));
   };
-  $('controls').append(sel, play, pngButton(`view${num}_loop${loop}_cel${frame}`), gif);
+  const und = toggle('undither', viewUndither,
+    'merge dither pairs the game\'s backgrounds also use',
+    () => { viewUndither = !viewUndither; showView(num); });
+  $('controls').append(sel, play, und, pngButton(`view${num}_loop${loop}_cel${frame}`), gif);
+  const mnote = viewUndither ? ` · ${merged} combinations merged` : '';
   $('controls').insertAdjacentHTML('beforeend',
-    `<span class="dim">view ${num} · ${v.loops.length} loops · mirror 0x${v.mirrorMask.toString(16)}</span>`);
+    `<span class="dim">view ${num} · ${v.loops.length} loops · ` +
+    `mirror 0x${v.mirrorMask.toString(16)}${mnote}</span>`);
   draw();
 }
 
@@ -824,6 +950,7 @@ function adopt(g: Game) {
   // once here rather than per resource -- the header in particular
   // cannot be decided from a single sound (see detectHeaderSize).
   try { bank = parseBank(g.data(9, 3)); } catch { bank = null; }
+  picToScript = null; picHist = null;
   try {
     soundHeader = detectHeaderSize([...g.byType('sound')].map(r => g.data(4, r.number)));
   } catch { soundHeader = -1; }
