@@ -42,6 +42,12 @@ priority-tested against the pic so sprites sit behind the scenery they should. A
 has an **undither** toggle that merges the dither pairs the game's backgrounds also
 use. Both work alongside the existing visual/undithered/priority/control modes.
 
+**Speed.** SCI0 games ask to wait zero ticks and let the machine set the pace — that
+is what their speed test was measuring — so on anything modern they run as fast as the
+interpreter can be driven. A zero wait is held for three ticks by default, which is
+twenty game cycles a second, about where the hardware of the day left them. The
+control in the corner changes it.
+
 **Dictation.** A page cannot see the fn key, so the hook is the other half of what
 macOS needs: playing keeps a focused, invisible text field over the picture, and
 dictated text inserted into it is forwarded to the game as keystrokes. Press fn twice

@@ -28,8 +28,22 @@ export class Session {
   /** Instructions per displayed frame; enough for a game cycle, bounded
    *  so one runaway loop cannot freeze the page. */
   budget = 120_000;
+  /** Game cycles per second when the game leaves the pace to us. */
+  get cyclesPerSecond() { return 60 / Math.max(1, this.vm.minWait); }
+  set cyclesPerSecond(v: number) {
+    this.vm.minWait = Math.max(1, Math.round(60 / Math.max(1, v)));
+  }
   instructions = 0;
   frames = 0;
+  /**
+   * The game's clock runs on wall-clock time, not on displayed frames.
+   *
+   * An SCI tick is a sixtieth of a second.  Counting one per frame ties
+   * the speed of the game to the refresh rate of the screen, so the same
+   * game runs twice as fast on a 120 Hz display as on a 60 Hz one.
+   */
+  private started_at = 0;
+  private ticksIssued = 0;
   private entry: { script: number; pc: number; obj: ReturnType<PMachine['instantiate']> } | null = null;
   private started = false;
   private done: { stopped: string; detail?: string } | null = null;
@@ -68,8 +82,15 @@ export class Session {
     if (!this.entry) return { running: false, instructions: 0, frames: 0, picture: -1, stopped: 'no entry point' };
     if (this.done) return { running: false, instructions: this.instructions, frames: this.frames,
                             picture: this.vm.currentPic, ...this.done };
-    // A displayed frame is a tick of the game's clock.
-    this.vm.advanceClock();
+    const now = Date.now();
+    if (!this.started_at) this.started_at = now;
+    const due = Math.floor((now - this.started_at) * 60 / 1000);
+    if (due > this.ticksIssued) {
+      // Cap the catch-up so a page that was in a background tab does not
+      // come back and run a minute of game in one frame.
+      this.vm.advanceClock(Math.min(due - this.ticksIssued, 6));
+      this.ticksIssued = due;
+    }
     const r = this.started
       ? this.vm.run(0, null, 0, { steps: this.budget, resume: true, keep: true, deadline: Date.now() + 120 })
       : this.vm.run(this.entry.script, this.entry.obj, this.entry.pc,

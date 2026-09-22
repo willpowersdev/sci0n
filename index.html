@@ -54,6 +54,8 @@
   /* Focused but invisible: it exists to catch typing and dictation. */
   #dictate{position:fixed;top:0;left:0;width:2px;height:2px;opacity:0;
            border:0;padding:0;z-index:1}
+  #speed{position:fixed;top:8px;right:180px;z-index:5;opacity:.25}
+  #speed:hover,#speed:focus{opacity:1}
   #mic{position:fixed;top:8px;right:60px;z-index:5;opacity:.25}
   #mic:hover{opacity:1}
   #mic.on{opacity:1;border-color:var(--accent);color:var(--accent)}
@@ -80,6 +82,13 @@
   characters it receives are forwarded to the game as keystrokes.
 -->
 <input id="dictate" hidden autocomplete="off" autocapitalize="off" spellcheck="false">
+<select id="speed" hidden title="game cycles per second">
+  <option value="10">10 cps — slow</option>
+  <option value="15">15 cps</option>
+  <option value="20" selected>20 cps — period</option>
+  <option value="30">30 cps</option>
+  <option value="60">60 cps — fast</option>
+</select>
 <button id="mic" hidden title="put the cursor in the dictation field, then press fn twice">🎤 dictation</button>
 <button id="quit" hidden>exit</button>
 <div id="hud" hidden></div>

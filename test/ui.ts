@@ -95,7 +95,7 @@ g.location = { search: `?game=${GAME}` };
 // The skeleton index.html declares, including #title inside #bar.
 for (const id of ['pick', 'gameinfo', 'tabs', 'list', 'bar', 'title',
                   'controls', 'stage', 'cv', 'text', 'play', 'quit', 'hud',
-                  'dictate', 'mic']) {
+                  'dictate', 'mic', 'speed']) {
   const e = new El(id === 'cv' ? 'canvas' : 'div'); e.id = id;
 }
 reg.get('bar')!.children.push(reg.get('title')!, reg.get('controls')!);

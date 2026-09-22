@@ -328,6 +328,7 @@ export class PMachine {
     }
     if (!this.frames.length) { res.stopped = 'ret'; return res; }
 
+    let yielded = false;
     while (res.steps < limit) {
       if ((res.steps & 0x0F) === 0 && Date.now() > deadline) {
         res.stopped = 'timeout'; break;
@@ -487,9 +488,26 @@ export class PMachine {
             // Popping only the arguments leaks one slot per kernel call,
             // which a game's main loop turns into a steady stack climb.
             const words = (a[1] >> 1) + this.restAdjust;
-            this.restAdjust = 0;
             const pBase = st.length - words - 1;
             if (pBase < 0) { res.stopped = 'error'; res.detail = 'callk: params underflow'; break; }
+            // `Wait` is the game saying it has finished a cycle and wants
+            // the rest of its frame back.  It blocks on real hardware, so
+            // it has to block here: the instruction is left un-executed
+            // and the slice ends, and the same `Wait` runs again next
+            // frame until enough ticks have gone by.  Returning
+            // immediately instead lets a game run its whole cycle as many
+            // times as the instruction budget allows, which is why
+            // everything moved far too fast.
+            if (this.index.kernelName(a[0]) === 'Wait') {
+              const asked = st[pBase + 1] ?? 0;
+              const want = asked > 0 ? asked : this.minWait;
+              if (this.ticks - this.lastWait < want) {
+                f.pc = ins.pc;          // run this same Wait again next slice
+                yielded = true;
+                break;
+              }
+            }
+            this.restAdjust = 0;
             const args = st.splice(pBase, words + 1).slice(1);
             res.kernelCalls.set(a[0], (res.kernelCalls.get(a[0]) ?? 0) + 1);
             this.acc = this.kernel(a[0], args, f);
@@ -566,7 +584,7 @@ export class PMachine {
       } catch (e: any) {
         res.stopped = 'error'; res.detail = e.message;
       }
-      if (res.stopped !== 'step-limit') break;
+      if (yielded || res.stopped !== 'step-limit') break;
     }
 
     // A run that merely ran out of budget still has a story to tell:
@@ -704,6 +722,16 @@ export class PMachine {
    */
   ticks = 0;
   private lastWait = 0;
+  /**
+   * Ticks a `Wait(0)` is held for.
+   *
+   * SCI0 games ask to wait zero and let the machine set the pace -- that
+   * is what their speed test was measuring -- so on anything modern the
+   * game runs as fast as the interpreter can be driven. Holding a zero
+   * wait for a few ticks puts the cycle rate back where the hardware of
+   * the day would have left it. Three ticks is twenty cycles a second.
+   */
+  minWait = 3;
 
   /** One tick is 1/60 s; the host advances it as frames are displayed. */
   advanceClock(n = 1) { this.ticks += n; }
@@ -834,11 +862,9 @@ export class PMachine {
       // --- time -------------------------------------------------------
       case 'GetTime': return this.ticks & 0x7FFF;
       case 'Wait': {
-        // Report how long has passed since the last Wait.  The clock is
-        // advanced by the host, one tick per displayed frame, not by
-        // this call: a game that waits out a title screen polls from a
-        // loop that never reaches Wait or Animate, so a clock that only
-        // moved here would leave it spinning for ever.
+        // Reached only once the wait is satisfied -- the interpreter
+        // loop holds the instruction back until then -- so this reports
+        // how long it actually took and starts the next interval.
         const elapsed = this.ticks - this.lastWait;
         this.lastWait = this.ticks;
         return elapsed;

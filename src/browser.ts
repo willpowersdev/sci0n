@@ -243,6 +243,7 @@ function stopPlay() {
   field.blur();
   field.hidden = true;
   ($('mic') as HTMLElement).hidden = true;
+  ($('speed') as HTMLElement).hidden = true;
   cv.removeEventListener('mousedown', grabFocus);
   if (current) render();
 }
@@ -316,6 +317,10 @@ function startPlay() {
   const field = $('dictate') as HTMLInputElement;
   field.addEventListener('input', onDictate);
   ($('mic') as HTMLElement).hidden = false;
+  const speed = $('speed') as HTMLSelectElement;
+  speed.hidden = false;
+  s.cyclesPerSecond = Number(speed.value) || 20;
+  speed.onchange = () => { if (session) session.cyclesPerSecond = Number(speed.value) || 20; };
   grabFocus();
   // Clicking the picture must not take focus away from the field.
   cv.addEventListener('mousedown', grabFocus);
@@ -329,7 +334,8 @@ function startPlay() {
     $('hud').textContent =
       `${st.frames} frames · ${(st.instructions / 1e6).toFixed(1)}M instructions` +
       `${st.picture >= 0 ? ` · picture ${st.picture}` : ''}` +
-      (st.running ? '  ·  shift-esc to leave  ·  fn fn to dictate'
+      (st.running ? `  ·  ${session.cyclesPerSecond.toFixed(0)} cycles/s` +
+                    '  ·  shift-esc to leave  ·  fn fn to dictate'
                   : `  ·  stopped: ${st.stopped ?? ''}`);
     if (st.running) raf = requestAnimationFrame(frame);
   };
