@@ -1,114 +1,103 @@
 /**
  * The AdLib instrument bank, patch resource 3.
  *
- * Structure established from the data: records are 28 bytes, and a bank
- * is either 1344 bytes (48 records, no header) or 2690 (a two-byte
- * header then 96).  Within a record the two operators sit in parallel
- * twelve-byte blocks, which is visible directly -- instrument 9 of SQ3
- * reads `02 02 01 01 03 00 01 01 00 00 02 00` against
- * `02 01 01 01 03 00 01 01 00 00 02 02` -- separated by a single byte,
- * with two more bytes at the end whose values are always 0..3, the range
- * of the OPL2 waveform select.
+ * Read out of ADL.DRV -- the driver Sierra shipped with these games --
+ * rather than inferred.  The loader at 0x1f7f walks an instrument:
  *
- *   byte  0      per-instrument, range 0..7 (feedback is also 3 bits)
- *   bytes 1..12  operator 1
- *   byte  13     per-operator-2 prefix; values look like a packed
- *                AM/VIB/EG/KSR/MULT register
- *   bytes 14..25 operator 2
- *   bytes 26,27  waveform select for each operator
+ *     add di, 0x1a     ; the two waveform bytes, at +26 and +27
+ *     mov al, cs:[di]  ; waveform for operator 0
+ *     inc di
+ *     mov dl, cs:[di]  ; waveform for operator 1
+ *     mov si, cx
+ *     add si, 0x0d     ; operator 1's record, thirteen bytes in
  *
- * WHAT IS NOT ESTABLISHED: the order of the twelve fields inside an
- * operator block.  The observed ranges do not reconcile with a plain
- * one-field-per-byte reading -- four of the OPL2 operator parameters are
- * single bits, yet only two positions are ever 0 or 1 -- so the mapping
- * below is a working assignment that puts each field somewhere its
- * observed range allows, not a decoded format.  Instruments therefore
- * play with approximately the right envelopes and ratios rather than the
- * exact AdLib timbres, and `raw` is kept so a corrected mapping can be
- * dropped in without re-reading the resource.
+ * and the copy at 0x2007 moves thirteen bytes (`cmp di, 0x0d`) into the
+ * driver's live operator state, then stores the caller's waveform byte
+ * masked to two bits as the fourteenth.  So the record is:
+ *
+ *     +0  .. +12   operator 0, the modulator
+ *     +13 .. +25   operator 1, the carrier
+ *     +26, +27     a waveform select for each
+ *
+ * The six register builders at 0x2090..0x228f then read fixed offsets
+ * within an operator:
+ *
+ *     +0  KSL   -> 0x40 bits 6-7      +7  RR    -> 0x80 low nibble
+ *     +1  MULT  -> 0x20 bits 0-3      +8  TL    -> 0x40 bits 0-5
+ *     +2  FB    -> 0xC0 bits 1-3      +9  AM    -> 0x20 bit 0x80
+ *     +3  AR    -> 0x60 high nibble   +10 VIB   -> 0x20 bit 0x40
+ *     +4  SL    -> 0x80 high nibble   +11 KSR   -> 0x20 bit 0x10
+ *     +5  EG    -> 0x20 bit 0x20      +12 CONN  -> 0xC0 bit 0, inverted
+ *     +6  DR    -> 0x60 low nibble
+ *
+ * AM, VIB, KSR and EG are tested with `or al,al` rather than masked, so
+ * any non-zero value sets the bit.  CONN is inverted: the builder at
+ * 0x211e does `cmp ...,0 / jne / inc cl`, so a zero byte sets the
+ * connection bit and means additive, and a non-zero byte means FM.
+ *
+ * There is no header: read from byte zero, feedback is 0..7 and the
+ * waveforms 0..3 in every one of the 624 instruments across seven games.
+ * Read two bytes later, feedback is valid in as few as 55% of them and a
+ * waveform reaches 205.
+ *
+ * Feedback and connection belong to the channel, not the operator, so
+ * the driver takes them from the modulator's record.
  */
 import type { Operator } from './opl2.ts';
 
-export interface Instrument {
-  /** The whole 28-byte record, so a better mapping needs no re-read. */
-  raw: Uint8Array;
-  feedback: number;
-  additive: boolean;
-  ops: Array<{
-    mult: number; ar: number; dr: number; sl: number; rr: number;
-    tl: number; ksl: number; am: boolean; vib: boolean; eg: boolean;
-    ksr: boolean; wave: number;
-  }>;
+export interface OperatorPatch {
+  ksl: number; mult: number; ar: number; sl: number; eg: boolean;
+  dr: number; rr: number; tl: number; am: boolean; vib: boolean;
+  ksr: boolean; wave: number;
 }
 
+export interface Instrument {
+  raw: Uint8Array;
+  feedback: number;
+  /** Operators summed rather than one modulating the other. */
+  additive: boolean;
+  /** Modulator first, then carrier. */
+  ops: OperatorPatch[];
+}
+
+const OP_BYTES = 13;
 const RECORD = 28;
 
-/**
- * Fields are placed by how they are distributed across 363 clean
- * instruments pooled from six games, not by a decoded spec.
- *
- * The operators sit 13 bytes apart, and the fields that behave the same
- * way in both of them identify themselves: index 2 peaks hard on the
- * value 1 (multiplier), index 7 peaks on 0 and runs to 63 (total level),
- * 8 and 9 are only ever 0 or 1, and 10 never exceeds 3 (key scale
- * level).  Index 0 has the highest mean of the four 0..15 fields, which
- * is what an attack rate looks like in a bank of real instruments.
- *
- * Indices 1 and 5 are left unassigned: both are wide, and index 1 is the
- * one field that behaves differently between the two operators, so
- * nothing can be concluded about it from distribution alone.
- */
-function readOp(r: Uint8Array, at: number, wave: number) {
+function readOp(r: Uint8Array, at: number, wave: number): OperatorPatch {
   const f = (i: number) => r[at + i] ?? 0;
   return {
-    ar: f(0) & 15,
-    mult: f(2) & 15,
-    dr: f(3) & 15,
+    ksl: f(0) & 3,          // shifted left six into an 8-bit register
+    mult: f(1) & 15,
+    ar: f(3) & 15,
     sl: f(4) & 15,
-    rr: f(6) & 15,
-    tl: f(7) & 63,
-    am: !!(f(8) & 1),
-    vib: !!(f(9) & 1),
-    ksl: f(10) & 3,
-    eg: !!(f(11) & 1),
-    ksr: false,
+    eg: f(5) !== 0,
+    dr: f(6) & 15,
+    rr: f(7) & 15,
+    tl: f(8) & 63,
+    am: f(9) !== 0,
+    vib: f(10) !== 0,
+    ksr: f(11) !== 0,
     wave: wave & 3,
   };
 }
 
 export function parseBank(d: Uint8Array): Instrument[] {
-  const off = d.length % RECORD === 0 ? 0 : 2;
-  const n = Math.floor((d.length - off) / RECORD);
   const out: Instrument[] = [];
-  for (let i = 0; i < n; i++) {
-    const r = d.subarray(off + i * RECORD, off + (i + 1) * RECORD);
+  for (let o = 0; o + RECORD <= d.length; o += RECORD) {
+    const r = d.subarray(o, o + RECORD);
     out.push({
       raw: r,
-      feedback: r[0] & 7,
-      // The connection bit rides with feedback on the real chip; with
-      // the field order unresolved, FM is the safer default -- additive
-      // on a patch meant for FM is much more wrong than the reverse.
-      additive: false,
-      ops: [readOp(r, 1, r[26]), readOp(r, 14, r[27])],
+      feedback: r[2] & 7,
+      additive: r[12] === 0,
+      ops: [readOp(r, 0, r[26]), readOp(r, OP_BYTES, r[27])],
     });
   }
   return out;
 }
 
-/**
- * Copy an instrument's operator settings onto a live operator.
- *
- * `sustain` overrides the EG-type bit.  That bit decides whether a note
- * holds while the key is down or decays on its own, and its position in
- * the record is one of the unresolved fields -- read from the wrong
- * place it comes out clear on nearly every instrument, every note dies
- * about forty milliseconds in, and the music is inaudible.  Holding
- * notes for the duration the score writes is the better error of the
- * two: genuinely percussive patches ring longer than they should, which
- * is audible but not silent.
- */
-export function applyOp(o: Operator, s: Instrument['ops'][number], sustain = true) {
-  o.mult = s.mult; o.ar = s.ar; o.dr = s.dr; o.sl = s.sl; o.rr = s.rr;
-  o.tl = s.tl; o.ksl = s.ksl; o.am = s.am; o.vib = s.vib;
-  o.eg = sustain ? true : s.eg; o.ksr = s.ksr; o.wave = s.wave;
+/** Copy an instrument's operator settings onto a live operator. */
+export function applyOp(o: Operator, s: OperatorPatch) {
+  o.ksl = s.ksl; o.mult = s.mult; o.ar = s.ar; o.sl = s.sl; o.eg = s.eg;
+  o.dr = s.dr; o.rr = s.rr; o.tl = s.tl; o.am = s.am; o.vib = s.vib;
+  o.ksr = s.ksr; o.wave = s.wave;
 }

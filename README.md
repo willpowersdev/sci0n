@@ -60,6 +60,11 @@ do not depend on the reference agreeing:
   order gives 2,066 overruns).
 - The disassembler's mnemonics are compared against **vocab.998, the interpreter's
   own opcode table** — 512 entries across 8 games, 0 mismatches.
+- The AdLib patch format is taken from **ADL.DRV, the driver Sierra shipped**, by
+  disassembling its loader and its six OPL register builders — not guessed from the
+  data. The data then agrees: read that way, feedback is 0..7 and the waveform
+  selects 0..3 in every one of the 624 instruments across seven games, where reading
+  the record two bytes later makes feedback valid in as few as 55% of them.
 - Every sound stream must run from its header to its `0xFC` end marker with no
   byte left unexplained.
 
@@ -71,19 +76,13 @@ These are deliberate and stated rather than hidden:
   envelope rates, feedback, the four waveforms — is reproduced; sample-exact
   hardware comparison is not claimed. Pitch is accurate to within 9 cents across
   five octaves through the full event chain.
-- **The AdLib patch field order is partly inferred.** Fields were placed by how they
-  distribute across 363 clean instruments pooled from six games, not from a spec.
-  MULT and TL are well supported (and a wrong MULT would throw pitch off by whole
-  harmonic ratios, which it does not). Two of the twelve fields are unassigned.
-  The raw 28-byte record is kept on every instrument so a corrected mapping drops
-  in without re-reading anything.
-- **The EG-type bit is not reliably located**, so notes are held for the duration the
-  score writes. Genuinely percussive patches ring longer than they should.
+- **Percussion is a dedicated synth, not OPL2 rhythm mode** (see below).
 - **Percussion is a dedicated synth, not OPL2 rhythm mode.** Channel 9 carries General
   MIDI percussion — pooled over a game its notes are hi-hat, kick, snare, tambourine
   and cymbals — and each drum is synthesised from a swept tone plus a noise burst.
   The AdLib driver used the chip's rhythm channels for these; the timbres here are
-  tuned rather than decoded.
+  tuned rather than decoded. This is the one part of the sound path that is still
+  approximated rather than read from the driver.
 - **Melodic programs are not General MIDI.** They index the game's own AdLib bank:
   the numbers used run 0..95 against a 96-instrument bank, and LSL2's 48-instrument
   bank is never asked for anything above 42. Program 127 means no instrument. Only

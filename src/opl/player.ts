@@ -104,11 +104,6 @@ export class Player {
     applyOp(ch.op1, inst.ops[1]);
     ch.feedback = inst.feedback;
     ch.additive = inst.additive;
-    // The release rate still governs how a note fades once released, so
-    // a note that is never released must not be allowed to hang: give
-    // the carrier a floor under its release when the patch asks for the
-    // fastest one.
-    if (ch.op1.rr === 0) ch.op1.rr = 5;
     // Velocity and channel volume attenuate the carrier, as the driver
     // did: the modulator's level shapes timbre and must not be touched.
     const scale = (velocity / 127) * this.volume[midi];
