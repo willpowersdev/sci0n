@@ -81,8 +81,22 @@ const MAX_FRAMES = 1024;
  */
 export const EV = {
   null: 0x0000, mouseDown: 0x0001, mouseUp: 0x0002,
-  keyboard: 0x0004, joystick: 0x0008, said: 0x0080, peek: 0x8000,
+  keyboard: 0x0004, joystick: 0x0008, direction: 0x0040,
+  said: 0x0080, peek: 0x8000,
 } as const;
+
+/**
+ * Direction keys, as the numeric keypad's scan codes.
+ *
+ * Directions run clockwise from north, 1 to 8, with 0 for the centre
+ * key that stops the ego -- the same numbering the movers use.  The
+ * arrow keys send the keypad's codes, which is why there is only one
+ * table: on the hardware they were the same keys.
+ */
+const KEY_DIRECTION: Record<number, number> = {
+  0x4700: 8, 0x4800: 1, 0x4900: 2, 0x4B00: 7, 0x4C00: 0,
+  0x4D00: 3, 0x4F00: 6, 0x5000: 5, 0x5100: 4,
+};
 
 export interface SciEvent {
   type: number; message: number; modifiers: number; x: number; y: number;
@@ -509,6 +523,7 @@ export class PMachine {
             const words = (a[1] >> 1) + this.restAdjust;
             const pBase = st.length - words - 1;
             if (pBase < 0) { res.stopped = 'error'; res.detail = 'callk: params underflow'; break; }
+            st[pBase] = words;
             // `Wait` is the game saying it has finished a cycle and wants
             // the rest of its frame back.  It blocks on real hardware, so
             // it has to block here: the instruction is left un-executed
@@ -534,9 +549,11 @@ export class PMachine {
           }
 
           case 'send': case 'self': case 'super': {
-            const words = Math.max(0, a[a.length - 1] >> 1) + this.restAdjust;
+            const rest = this.restAdjust;
+            const words = Math.max(0, a[a.length - 1] >> 1) + rest;
             this.restAdjust = 0;
             const args = st.splice(st.length - words, words);
+            if (rest) this.widenLastGroup(args, rest);
             const target = ins.name === 'send' ? this.resolveTarget(f, this.acc) : f.obj;
             if (!target) {
               const v = this.acc;
@@ -559,6 +576,9 @@ export class PMachine {
             this.restAdjust = 0;
             const pBase = st.length - words - 1;
             if (pBase < 0) { res.stopped = 'error'; res.detail = `${ins.name}: params underflow`; break; }
+            // A call's count word is simply however many words were
+            // pushed, so `&rest` needs no separate bookkeeping here.
+            st[pBase] = words;
             let targetScript = f.scriptNo, targetPc = -1;
             if (ins.name === 'call') targetPc = next + a[0];
             else {
@@ -579,14 +599,16 @@ export class PMachine {
             if (argc < 0 || argc > FRAME_WINDOW) break;
             let pushed = 0;
             for (let i = a[0]; i <= argc; i++) { st.push(this.stack[f.paramsBase + i] ?? 0); pushed++; }
-            if (pushed) {
-              // The count word for the call being built sits just below
-              // what was pushed, and has to grow by the same amount or
-              // the callee is told it has fewer arguments than it does.
-              const at = st.length - pushed - 1;
-              if (at >= 0) st[at] = (st[at] ?? 0) + pushed;
-              this.restAdjust += pushed;
-            }
+            // The count word for the call being built has to grow by the
+            // same amount, but it is not at a fixed distance from here:
+            // it sits below whatever arguments were pushed explicitly
+            // first.  `(mover init: self &rest 2)` pushes one, and
+            // reaching past it lands on that argument and corrupts it
+            // instead -- which is how the ego came to be given a mover
+            // whose client was a number that resolved to nothing.  Only
+            // the instruction that consumes these knows the layout, so
+            // the count is recorded and fixed up there.
+            this.restAdjust += pushed;
             break;
           }
 
@@ -676,6 +698,52 @@ export class PMachine {
     }
     f.pending = undefined;
     return false;
+  }
+
+  /**
+   * How far a mover's client should move this cycle.
+   *
+   * A straight line to the target, limited to the client's own step in
+   * whichever axis dominates, and landing exactly on the target once it
+   * is within one step.  Working it out from the current position each
+   * cycle rather than accumulating a stored increment keeps the path
+   * straight without rounding drift, and means a client nudged by
+   * anything else simply carries on from where it now is.
+   */
+  private bresenStep(mover: RtObject, client: RtObject, mult: number) {
+    const cx = s16(u16(this.prop(client, 'x')));
+    const cy = s16(u16(this.prop(client, 'y')));
+    const tx = s16(u16(this.prop(mover, 'x', cx)));
+    const ty = s16(u16(this.prop(mover, 'y', cy)));
+    const dx = tx - cx, dy = ty - cy;
+    const sx = Math.max(1, Math.abs(s16(u16(this.prop(client, 'xStep', 3))))) * mult;
+    const sy = Math.max(1, Math.abs(s16(u16(this.prop(client, 'yStep', 2))))) * mult;
+    if (Math.abs(dx) <= sx && Math.abs(dy) <= sy) return { dx, dy };
+    if (Math.abs(dx) * sy >= Math.abs(dy) * sx) {
+      const step = Math.sign(dx) * sx;
+      return { dx: step, dy: Math.round(dy * sx / Math.abs(dx)) };
+    }
+    const step = Math.sign(dy) * sy;
+    return { dx: Math.round(dx * sy / Math.abs(dy)), dy: step };
+  }
+
+  /**
+   * Grow the count of the last selector group by what `&rest` added.
+   *
+   * A send carries several (selector, count, args...) groups and `&rest`
+   * widens only the one being built, which is the last.  Walking the
+   * groups from the front is the only way to find its count word: from
+   * the back, the arguments and the counts are indistinguishable.
+   */
+  private widenLastGroup(args: number[], rest: number) {
+    const base = args.length - rest;
+    let i = 0;
+    while (i + 1 < args.length) {
+      const n = args[i + 1];
+      if (!Number.isInteger(n) || n < 0 || n > 127) return;
+      if (i + 2 + n >= base) { args[i + 1] = n + rest; return; }
+      i += 2 + n;
+    }
   }
 
   /**
@@ -1019,24 +1087,59 @@ export class PMachine {
         this.setProp(o, 'nsBottom', r.bottom);
         return 0;
       }
-      case 'DoBresen': {
-        // One step of the straight-line mover: walk toward (xLast, yLast)
-        // by (xStep, yStep) and report arrival by clearing the mover.
-        const o = this.resolveTarget(null, a0);
-        if (!o) return 0;
-        const cx = this.prop(o, 'x'), cy = this.prop(o, 'y');
-        const tx = this.prop(o, 'xLast', cx), ty = this.prop(o, 'yLast', cy);
-        const sx = Math.max(1, Math.abs(this.prop(o, 'xStep', 3)));
-        const sy = Math.max(1, Math.abs(this.prop(o, 'yStep', 2)));
-        const dx = tx - cx, dy = ty - cy;
-        if (Math.abs(dx) <= sx && Math.abs(dy) <= sy) {
-          this.setProp(o, 'x', tx); this.setProp(o, 'y', ty);
-          return 1;                      // arrived
-        }
-        this.setProp(o, 'x', cx + Math.sign(dx) * Math.min(sx, Math.abs(dx)));
-        this.setProp(o, 'y', cy + Math.sign(dy) * Math.min(sy, Math.abs(dy)));
+      /**
+       * Set a mover up to walk its client to (x, y).
+       *
+       * A mover carries the destination; the thing that moves is its
+       * `client`.  `Motion::init` calls this and `Motion::doit` then
+       * calls `DoBresen` once a cycle, so without this the mover starts
+       * with no idea how far it has to go -- which is why the ego stood
+       * still with every part of the walking machinery apparently
+       * running.
+       */
+      case 'InitBresen': {
+        const mover = this.resolveTarget(null, a0);
+        if (!mover) return 0;
+        const client = this.resolveTarget(null, this.prop(mover, 'client'));
+        if (!client) return 0;
+        const mult = args.length > 1 ? (a1 || 1) : 1;
+        const cx = s16(u16(this.prop(client, 'x')));
+        const cy = s16(u16(this.prop(client, 'y')));
+        const step = this.bresenStep(mover, client, mult);
+        this.setProp(mover, 'dx', step.dx);
+        this.setProp(mover, 'dy', step.dy);
+        this.setProp(mover, 'xLast', cx);
+        this.setProp(mover, 'yLast', cy);
+        this.setProp(mover, 'b-moveCnt', 0);
+        this.setProp(mover, 'completed', 0);
         return 0;
       }
+
+      /**
+       * One cycle of a mover: step its client along the line.
+       *
+       * The script decides arrival itself -- `Motion::doit` compares the
+       * mover's x and y against the client's and calls `moveDone` when
+       * they match -- so the last step has to land exactly on the
+       * target rather than merely near it, or the walk never ends.
+       */
+      case 'DoBresen': {
+        const mover = this.resolveTarget(null, a0);
+        if (!mover) return 0;
+        const client = this.resolveTarget(null, this.prop(mover, 'client'));
+        if (!client) return 0;
+        const cx = s16(u16(this.prop(client, 'x')));
+        const cy = s16(u16(this.prop(client, 'y')));
+        this.setProp(mover, 'xLast', cx);
+        this.setProp(mover, 'yLast', cy);
+        const step = this.bresenStep(mover, client, 1);
+        this.setProp(client, 'x', cx + step.dx);
+        this.setProp(client, 'y', cy + step.dy);
+        this.setProp(mover, 'b-moveCnt',
+          u16(this.prop(mover, 'b-moveCnt')) + 1);
+        return 0;
+      }
+
       case 'GlobalToLocal': case 'LocalToGlobal': {
         // There is one port covering the picture, so the two spaces are
         // the same and the coordinates pass through unchanged.
@@ -1265,6 +1368,28 @@ export class PMachine {
        * never call, and queries with nothing to answer from, fall
        * through to zero.
        */
+      /**
+       * Turn a direction key into a direction event.
+       *
+       * This is the whole of keyboard walking.  `User::handleEvent`
+       * hands its event here and then acts on the *type* it comes back
+       * with, so a machine that does not implement this leaves the
+       * event a plain keystroke: the ego never moves, and the key falls
+       * through to whatever else is listening.  Returning 0 is not a
+       * harmless stub -- it is the difference between a game that can
+       * be played and one that only looks like it.
+       */
+      case 'MapKeyToDir': {
+        const ev = this.resolveTarget(null, a0);
+        if (!ev) return 0;
+        if (this.prop(ev, 'type') !== EV.keyboard) return 0;
+        const dir = KEY_DIRECTION[u16(this.prop(ev, 'message'))];
+        if (dir === undefined) return 0;
+        this.setProp(ev, 'type', EV.direction);
+        this.setProp(ev, 'message', dir);
+        return 1;
+      }
+
       case 'DoSound': {
         const verb = this.sounds.verb(a0);
         if (!verb) return 0;
@@ -1351,6 +1476,13 @@ export class PMachine {
        * finds somewhere it can stand, so a blanket "no" is an infinite
        * search that stops a room ever finishing its init.
        */
+      // TODO: both are stubs. `CanBeHere` answering yes to everything
+      // is why the ego can walk off the edge of the picture and keep
+      // going, and `OnControl` returning 0 means rooms never notice the
+      // ego reaching a doorway.  Implementing them against the control
+      // plane is the next piece of work; a first attempt moved the ego
+      // off screen anyway and broke Camelot's walking, so it wants doing
+      // properly rather than quickly.
       case 'CanBeHere': return 1;
       case 'OnControl': return 0;
 
