@@ -121,11 +121,12 @@ These are deliberate and stated rather than hidden:
 - **KQ4 and QFG1 do not boot.** KQ4 dies in a copy-protection script that reads a
   local variable from a script with no locals block; QFG1 dies in `Act::canBeHere`
   on a path that needs `BaseSetter`.
-- **The interpreter is partial.** It draws pictures and the cast, moves actors and
-  takes input, but `Display` (text on screen), windows, menus, the parser and the
-  save/restore path are still stubs that return zero, so a game will run and animate
-  without yet being completable. KQ4 and QFG1 stop with an error during start-up;
-  Iceman runs but has not drawn a picture by frame 300.
+- **The interpreter is partial.** It draws pictures and the cast, moves actors, takes
+  input and draws `Display` text, and games progress through several screens. What is
+  still missing is windows (`NewWindow` returns zero, so message boxes never appear),
+  menus, the parser, and save/restore — so a game runs and animates without being
+  completable. KQ4 and QFG1 stop with an error during start-up; Iceman runs but has
+  not drawn a picture by frame 300.
 - **The behavioural model is a hypothesis, not a proof.** A tested global is not
   necessarily a precondition — the scan covers a whole handler body, so tests in a
   nested branch are attributed to the command as a whole — conditions held in object

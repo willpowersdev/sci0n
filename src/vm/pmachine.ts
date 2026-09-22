@@ -22,6 +22,7 @@ import { SpeciesTable } from './heap.ts';
 import { View, type Cel } from '../view.ts';
 import { Picture } from '../pic.ts';
 import { Font } from '../font.ts';
+import { strings as textStrings } from '../text.ts';
 import { Screen, WIDTH, HEIGHT } from './screen.ts';
 
 /**
@@ -180,6 +181,11 @@ export class PMachine {
   private views = new Map<number, View | null>();
   private fonts = new Map<number, Font | null>();
   private selCache = new Map<string, number>();
+  /** Strings the kernel made, which scripts hold by handle. */
+  private strings = new Map<number, string>();
+  private textRes = new Map<number, string[]>();
+  /** Where Display leaves the caret, and what it last drew with. */
+  private dsFont = 0;
 
   constructor(game: Game, index?: Index) {
     this.game = game;
@@ -640,11 +646,15 @@ export class PMachine {
   private selDoit = -2;
 
   /**
-   * Ticks since start, 1/60 s as the games assume.  A clock that never
-   * advances turns every `while (< (GetTime) deadline)` into a spin, so
-   * time has to move even when nothing is drawn.
+   * Ticks since start, 1/60 s as the games assume.  Advanced by the
+   * host once per displayed frame rather than by any kernel call, so
+   * time passes for a game that is waiting without animating.
    */
-  private ticks = 0;
+  ticks = 0;
+  private lastWait = 0;
+
+  /** One tick is 1/60 s; the host advances it as frames are displayed. */
+  advanceClock(n = 1) { this.ticks += n; }
 
   /**
    * Periodic sample of the innermost frame.  Where a run spends its
@@ -771,7 +781,16 @@ export class PMachine {
 
       // --- time -------------------------------------------------------
       case 'GetTime': return this.ticks & 0x7FFF;
-      case 'Wait': { const prev = this.ticks; this.ticks += Math.max(1, a0); return this.ticks - prev; }
+      case 'Wait': {
+        // Report how long has passed since the last Wait.  The clock is
+        // advanced by the host, one tick per displayed frame, not by
+        // this call: a game that waits out a title screen polls from a
+        // loop that never reaches Wait or Animate, so a clock that only
+        // moved here would leave it spinning for ever.
+        const elapsed = this.ticks - this.lastWait;
+        this.lastWait = this.ticks;
+        return elapsed;
+      }
 
       // --- lists and nodes --------------------------------------------
       case 'NewList': { const h = this.alloc(); this.lists.set(h, { first: 0, last: 0 }); return h; }
@@ -963,11 +982,36 @@ export class PMachine {
       }
 
       // --- things that only need to not fail -----------------------------
+      case 'Display': return this.display(args);
+      case 'GetFarText': {
+        // GetFarText(resource, line, buffer) hands back the text itself.
+        const lines = this.textLines(a0);
+        return this.makeString(lines[a1] ?? '');
+      }
+      case 'Format': {
+        // Format(dest, source, ...) -- the source may be a string or a
+        // (resource, line) pair, same as Display.
+        let i = 1, src: string;
+        if (this.strings.has(a1) || isRef(a1)) { src = this.stringAt(a1); i = 2; }
+        else { src = this.textLines(a1)[args[2] ?? 0] ?? ''; i = 3; }
+        return this.makeString(this.format(src, args.slice(i)));
+      }
+      case 'StrLen': return this.stringAt(a0).length;
+      case 'StrCpy': return a0;
+      case 'StrCmp': {
+        const x = this.stringAt(a0), y = this.stringAt(a1);
+        return x < y ? -1 : x > y ? 1 : 0;
+      }
+      case 'StrAt': {
+        const t = this.stringAt(a0);
+        return t.charCodeAt(a1) || 0;
+      }
+
       case 'DisposeScript': case 'FlushResources': case 'MemoryInfo':
       case 'SetMenu': case 'AddMenu': case 'DrawMenuBar': case 'SetSynonyms':
       case 'GetSaveDir': case 'GetCWD': case 'DoSound': case 'NewWindow':
-      case 'DisposeWindow': case 'Display': case 'DrawControl': case 'EditControl':
-      case 'HiliteControl': case 'Format': case 'GetFarText': case 'FileIO':
+      case 'DisposeWindow': case 'DrawControl': case 'EditControl':
+      case 'HiliteControl': case 'FileIO':
       case 'FOpen': case 'FClose': case 'FGets': case 'FPuts':
         return 0;
 
@@ -1097,12 +1141,117 @@ export class PMachine {
   }
 
   /**
+   * Display(text, attributes...).
+   *
+   * The text is either a string the kernel or a script owns, or a
+   * (resource, line) pair -- the games use both, so which one it is has
+   * to be decided from the value rather than assumed.
+   *
+   * After it come attribute codes, read from the calls the games
+   * actually make: 100 takes a coordinate pair, 101 a font, 102 and 103
+   * the two colours, 105 a width; 107 and 121 take nothing.  An
+   * unrecognised code stops the scan rather than guessing a length,
+   * because guessing wrong reads the next code as a value and turns the
+   * rest of the arguments into nonsense.
+   */
+  private display(args: number[]): number {
+    let i = 0;
+    let text: string;
+    if (this.strings.has(args[0]) || isRef(args[0])) { text = this.stringAt(args[0]); i = 1; }
+    else { text = this.textLines(args[0])[args[1] ?? 0] ?? ''; i = 2; }
+
+    let x = 0, y = 0, fg = 15, width = WIDTH, haveXY = false;
+    for (; i < args.length;) {
+      const code = args[i++];
+      if (code === 100) { x = args[i++]; y = args[i++]; haveXY = true; }
+      else if (code === 101) { this.dsFont = args[i++]; }
+      else if (code === 102) { fg = args[i++] & 0x0F; }
+      else if (code === 103) { i++; }                 // background
+      else if (code === 104 || code === 106 || code === 108) { i++; }
+      else if (code === 105) { width = args[i++]; }
+      else if (code === 107 || code === 121) { /* no value */ }
+      else break;
+    }
+    if (!text) return 0;
+    const font = this.font(this.dsFont) ?? this.font(0);
+    if (!font) return 0;
+    if (!haveXY) { x = 0; y = 0; }
+    this.drawText(font, text, x, y, fg, Math.min(width, WIDTH - x));
+    return 0;
+  }
+
+  /** Draw text, wrapping on spaces inside the given width. */
+  private drawText(font: Font, text: string, x: number, y: number,
+                   colour: number, width: number) {
+    const lineHeight = Math.max(8, font.lineHeight);
+    const measure = (s: string) => {
+      let w = 0;
+      for (const ch of s) w += font.chars[ch.charCodeAt(0)]?.width ?? 0;
+      return w;
+    };
+    let cy = y;
+    for (const para of text.split('\n')) {
+      let line = '';
+      for (const word of para.split(' ')) {
+        const next = line ? `${line} ${word}` : word;
+        if (line && measure(next) > width) {
+          this.screen.text(font, line, x, cy, colour);
+          cy += lineHeight;
+          line = word;
+        } else line = next;
+      }
+      this.screen.text(font, line, x, cy, colour);
+      cy += lineHeight;
+    }
+  }
+
+  /** The printf subset the scripts use. */
+  private format(src: string, args: number[]): string {
+    let out = '', ai = 0;
+    for (let i = 0; i < src.length; i++) {
+      if (src[i] !== '%') { out += src[i]; continue; }
+      let j = i + 1;
+      while (j < src.length && /[-0-9.]/.test(src[j])) j++;
+      const kind = src[j];
+      const v = args[ai++];
+      if (kind === 'd' || kind === 'u') out += String(v ?? 0);
+      else if (kind === 's') out += this.stringAt(v ?? 0);
+      else if (kind === 'c') out += String.fromCharCode(v ?? 32);
+      else if (kind === 'x') out += (v ?? 0).toString(16);
+      else if (kind === '%') { out += '%'; ai--; }
+      else { out += src.slice(i, j + 1); ai--; }
+      i = j;
+    }
+    return out;
+  }
+
+  /** Lines of a text resource, cached. */
+  textLines(n: number): string[] {
+    let l = this.textRes.get(n);
+    if (!l) {
+      const d = this.game.tryData('text', n);
+      l = d ? textStrings(d) : [];
+      this.textRes.set(n, l);
+    }
+    return l;
+  }
+
+  /** Put a string on the kernel's heap and return its handle. */
+  makeString(s: string): number {
+    const h = this.alloc();
+    this.strings.set(h, s);
+    return h;
+  }
+
+  /**
    * Read a NUL-terminated string a script pointed at.
    *
    * A tagged reference names its script; a bare offset is assumed to sit
    * in script 0, which is where the shared strings live.
    */
   stringAt(ref: number): string {
+    const made = this.strings.get(ref);
+    if (made !== undefined) return made;
     const scriptNo = isRef(ref) ? refScript(ref) : 0;
     const off = isRef(ref) ? refOffset(ref) : ref;
     const sc = this.script(scriptNo);

@@ -68,6 +68,8 @@ export class Session {
     if (!this.entry) return { running: false, instructions: 0, frames: 0, picture: -1, stopped: 'no entry point' };
     if (this.done) return { running: false, instructions: this.instructions, frames: this.frames,
                             picture: this.vm.currentPic, ...this.done };
+    // A displayed frame is a tick of the game's clock.
+    this.vm.advanceClock();
     const r = this.started
       ? this.vm.run(0, null, 0, { steps: this.budget, resume: true, keep: true, deadline: Date.now() + 120 })
       : this.vm.run(this.entry.script, this.entry.obj, this.entry.pc,
