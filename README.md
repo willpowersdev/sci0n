@@ -46,7 +46,13 @@ use. Both work alongside the existing visual/undithered/priority/control modes.
 is what their speed test was measuring — so on anything modern they run as fast as the
 interpreter can be driven. A zero wait is held for three ticks by default, which is
 twenty game cycles a second, about where the hardware of the day left them. The
-control in the corner changes it.
+control in the corner changes it, including a setting that runs the clock well ahead
+of real time for skipping an intro: the game still waits exactly as long as it thinks
+it does, there is just less of your time in each of its ticks.
+
+Because they now run at period speed, reaching a room you can walk about in takes as
+long as it did in 1989 — minutes of logos and intro for some of them. The arrow keys
+work once you are there; `test/input.ts` is the check that they do.
 
 **Dictation.** A page cannot see the fn key, so the hook is the other half of what
 macOS needs: playing keeps a focused, invisible text field over the picture, and

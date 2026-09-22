@@ -28,11 +28,17 @@ export class Session {
   /** Instructions per displayed frame; enough for a game cycle, bounded
    *  so one runaway loop cannot freeze the page. */
   budget = 120_000;
-  /** Game cycles per second when the game leaves the pace to us. */
-  get cyclesPerSecond() { return 60 / Math.max(1, this.vm.minWait); }
-  set cyclesPerSecond(v: number) {
-    this.vm.minWait = Math.max(1, Math.round(60 / Math.max(1, v)));
-  }
+  /**
+   * Game cycles per second when the game leaves the pace to us.
+   *
+   * A cycle costs `minWait` ticks, so asking for a rate is asking for
+   * the clock to issue that many ticks a second.  Running the clock
+   * faster than real time is what makes skipping an intro possible: the
+   * game still waits exactly as long as it thinks it does, there is just
+   * less of our time in each of its ticks.
+   */
+  cyclesPerSecond = 20;
+  private get ticksPerSecond() { return this.cyclesPerSecond * this.vm.minWait; }
   instructions = 0;
   frames = 0;
   /**
@@ -44,6 +50,16 @@ export class Session {
    */
   private started_at = 0;
   private ticksIssued = 0;
+  /**
+   * Where the time comes from.
+   *
+   * A browser paces frames for us, so wall-clock time is the right
+   * source there.  A test driving frames in a loop passes no time at
+   * all, and a game whose clock never moves waits for ever -- so the
+   * source is replaceable, and a harness can hand over a clock it
+   * controls.
+   */
+  now: () => number = () => Date.now();
   private entry: { script: number; pc: number; obj: ReturnType<PMachine['instantiate']> } | null = null;
   private started = false;
   private done: { stopped: string; detail?: string } | null = null;
@@ -82,13 +98,15 @@ export class Session {
     if (!this.entry) return { running: false, instructions: 0, frames: 0, picture: -1, stopped: 'no entry point' };
     if (this.done) return { running: false, instructions: this.instructions, frames: this.frames,
                             picture: this.vm.currentPic, ...this.done };
-    const now = Date.now();
+    const now = this.now();
     if (!this.started_at) this.started_at = now;
-    const due = Math.floor((now - this.started_at) * 60 / 1000);
+    const due = Math.floor((now - this.started_at) * this.ticksPerSecond / 1000);
     if (due > this.ticksIssued) {
       // Cap the catch-up so a page that was in a background tab does not
-      // come back and run a minute of game in one frame.
-      this.vm.advanceClock(Math.min(due - this.ticksIssued, 6));
+      // come back and run a minute of game in one frame.  The cap scales
+      // with the rate, or asking for speed would be undone by it.
+      const cap = Math.max(6, Math.ceil(this.ticksPerSecond / 6));
+      this.vm.advanceClock(Math.min(due - this.ticksIssued, cap));
       this.ticksIssued = due;
     }
     const r = this.started

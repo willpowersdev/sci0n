@@ -862,11 +862,18 @@ export class PMachine {
       // --- time -------------------------------------------------------
       case 'GetTime': return this.ticks & 0x7FFF;
       case 'Wait': {
-        // Reached only once the wait is satisfied -- the interpreter
-        // loop holds the instruction back until then -- so this reports
-        // how long it actually took and starts the next interval.
+        // Reached only once the wait is satisfied -- the interpreter loop
+        // holds the instruction back until then -- so this reports how
+        // long it actually took and opens the next interval.
         const elapsed = this.ticks - this.lastWait;
-        this.lastWait = this.ticks;
+        const want = a0 > 0 ? a0 : this.minWait;
+        // Advance by the interval rather than to the clock, so time
+        // already earned is not thrown away: setting it to now means the
+        // next wait always blocks and the game can never do more than
+        // one cycle per frame, however fast the clock is running.  If it
+        // has fallen a long way behind -- a slow frame, a background tab
+        // -- give up the backlog instead of bursting through it.
+        this.lastWait = elapsed > want * 8 ? this.ticks : this.lastWait + want;
         return elapsed;
       }
 

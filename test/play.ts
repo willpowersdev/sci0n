@@ -14,6 +14,11 @@
  * LSL2 and Colonel's Bequest quit when their copy-protection question is
  * answered wrongly -- which is the game working, not failing, but is
  * indistinguishable here from a crash.
+ *
+ * Time is driven rather than measured.  Frames run back to back here, so
+ * no wall-clock time passes between them, and a game paces itself by the
+ * clock: left on real time it would sit waiting for ever and the suite
+ * would report it running while it did nothing.
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -33,10 +38,13 @@ for (const name of GAMES) {
   const s = new Session(g);
   if (!s.ready) { console.log(`${name.padEnd(9)} no entry point`); continue; }
   s.budget = 60_000;
+  let clock = 0;
+  s.now = () => clock;           // a sixtieth of a second per frame
   const pics = new Set<number>();
   let st = s.tick();
   let firstHalf = 0;
   for (let i = 0; i < 300 && st.running; i++) {
+    clock += 1000 / 60;
     st = s.tick();
     if (st.picture >= 0) pics.add(st.picture);
     if (i === 149) firstHalf = st.instructions;
