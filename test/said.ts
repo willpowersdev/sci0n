@@ -22,6 +22,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Game, type ResourceSource } from '../src/resources.ts';
+import { Script } from '../src/script.ts';
 import { gameWords } from '../src/vocab.ts';
 import { Parser } from '../src/vm/parser.ts';
 import { ROOT } from './games.ts';
@@ -91,14 +92,25 @@ for (const name of ['SQ3', 'CAMELOT']) {
   // ...and the roles are not interchangeable.
   check(false, 'give the guard the key', 'give/guard/key', 'the roles are not symmetric');
 
-  // A part the pattern leaves out must be empty in what was typed.
+  // A part the pattern does not mention is not asked about, which is
+  // what lets a game test `look>` on the outside and sort out what was
+  // looked at on the inside.
   check(true, 'look', 'look', 'nothing but the verb');
-  check(false, 'look at the key', 'look', 'a pattern of one part wants a line of one part');
+  check(true, 'look at the key', 'look', 'a pattern of one part ignores the rest');
   check(true, 'look at the key', 'look/key', 'naming the second part');
-  // A part written empty is a wildcard, which is why patterns end in a
-  // bare slash.
   check(true, 'look at the key', '/key', 'an empty first part takes any verb');
   check(true, 'look at the key', '/key/', 'a trailing slash takes any third part too');
+
+  // `!*` is how a pattern asks for a part to have been left unsaid, and
+  // `*` is how it asks for anything at all to have been said there.
+  check(true, 'look', 'look/!*', 'nothing was said about anything');
+  check(false, 'look at the key', 'look/!*', 'something was');
+  check(true, 'look at the key', 'look/*', 'something was said there');
+  check(false, 'look', 'look/*', 'and here nothing was');
+  // Making that test optional cannot make it vacuous: "absent" and
+  // "empty" are the same thing to ask about.
+  check(true, 'look', 'look[/!*]', 'an optional emptiness test still holds');
+  check(false, 'look at the key', 'look[/!*]', 'and still refuses a line that said something');
 
   // A reference asks for the particle as well as the verb.
   check(true, 'turn on the key', 'turn<on/key', 'the particle was typed');
@@ -145,6 +157,62 @@ for (const name of ['SQ3', 'CAMELOT']) {
   const ok = unknown === 'zzxyqq';
   if (!ok) failed++;
   console.log(`  ${ok ? 'ok  ' : 'FAIL'} an unknown word is named back${ok ? '' : ` -- got ${JSON.stringify(unknown)}`}`);
+}
+
+/**
+ * Every group a pattern names is a real one.
+ *
+ * The said block is a run of patterns separated by 0xFF, but it cannot
+ * be scanned a byte at a time looking for one: a byte below 0xF0 opens
+ * a two-byte word group whose low byte may be anything, 0xFF included.
+ * The wildcard `*` is group 0x0fff, so every pattern using it was being
+ * cut in half -- the head keeping a dangling 0x0f that read as the
+ * nonexistent group 0x0f00, the tail starting mid-pattern.
+ *
+ * Camelot lost 203 wildcards that way, and with them the global
+ * handlers that answer "get <anything>" and "look at <anything>";
+ * typing "get purse" in Arthur's chamber reached no pattern at all.
+ *
+ * Two things are asked here, because either alone can be satisfied by
+ * a decoder that simply drops what it cannot read: no pattern may name
+ * a group the vocabulary does not have, and the wildcard must actually
+ * be found, since these games certainly use it.
+ */
+{
+  console.log('\n=== said blocks ===');
+  for (const name of ['SQ3', 'CAMELOT', 'LSL2', 'KQ4']) {
+    let g: Game;
+    try { g = new Game(nodeSource(join(ROOT, name))); } catch { continue; }
+    const groups = new Set<number>();
+    for (const [, , grp] of gameWords(g)) groups.add(grp);
+    let specs = 0, wild = 0;
+    const bad = new Map<number, number>();
+    for (const r of g.byType('script')) {
+      const d = g.tryData('script', r.number);
+      if (!d) continue;
+      let sc: Script;
+      try { sc = new Script(d, r.number); } catch { continue; }
+      for (const [, spec] of sc.said) {
+        specs++;
+        for (let i = 0; i < spec.length; i++) {
+          const v = spec[i];
+          if (v >= 0xF0) continue;
+          const grp = (v << 8) | (spec[i + 1] ?? 0);
+          i++;
+          if (grp === 0xFFF) { wild++; continue; }
+          if (grp === 0xFFE) continue;
+          if (!groups.has(grp)) bad.set(grp, (bad.get(grp) ?? 0) + 1);
+        }
+      }
+    }
+    checked += 2;
+    if (bad.size) failed++;
+    if (!wild) failed++;
+    console.log(`  ${name.padEnd(8)} ${String(specs).padStart(5)} patterns · ` +
+      `${String(wild).padStart(4)} name the wildcard${wild ? '' : ' -- NONE, SO THEY ARE BEING CUT SHORT'} · ` +
+      `${bad.size ? `NAMES GROUPS THE VOCABULARY HAS NOT: ${[...bad].map(([k, n]) => `0x${k.toString(16)}x${n}`).join(' ')}`
+                  : 'every group is a real one'}`);
+  }
 }
 
 console.log(`\n${checked - failed}/${checked} Said checks passed`);

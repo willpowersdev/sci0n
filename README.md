@@ -100,12 +100,19 @@ text. That catches porting errors, but it cannot catch a mistake both sides shar
 - **The glyph header is width-then-height**, not the reverse. The wrong order still
   renders something letter-shaped whenever both widths need the same number of
   bytes per row, so most fonts looked fine.
+- **Said blocks were split on any `0xFF`**, including one that was the low byte of a
+  word group. The wildcard `*` is group `0x0FFF`, so every pattern using it was cut
+  in two and 486 patterns across the eight games were nonsense. Both digests agreed;
+  what showed it was typing "get purse" in a room that would not answer.
 
 Both were found by looking at the output, and both are now covered by checks that
 do not depend on the reference agreeing:
 
 - Every glyph's bytes must end exactly where the next glyph begins (the wrong
   order gives 2,066 overruns).
+- Every word group a said pattern names must be one the vocabulary has, and the
+  wildcard must actually turn up — a decoder that quietly drops what it cannot read
+  satisfies one of those but not both.
 - The GIF encoder is checked by decoding its own output back to the exact pixels with
   an independently written reader, including a case large enough to fill the LZW
   dictionary and force a table reset.

@@ -538,7 +538,17 @@ to a `Said` call and looking back for the pointer recovers the pattern
 the handler answers to.  The body then runs to the next `Said` call or
 `ret`, and every global that window reads or writes is recorded.
 
-On SQ3: **1,132 of 1,144 said specs linked to their handler, 2
+A said block is a run of patterns separated by `0xFF`, but it cannot be
+scanned a byte at a time looking for one.  A byte below `0xF0` opens a
+two-byte word group, and the low byte of a group may be anything at all
+— `0xFF` included.  The wildcard `*` is group `0x0FFF`, so a scanner
+that stops at the first `0xFF` it sees cuts every pattern using it in
+half: the head keeps a dangling `0x0F` that reads as the nonexistent
+group `0x0F00`, and the tail begins mid-pattern.  Stepping over the pair
+is the whole fix, and it is worth 486 rejoined patterns across the eight
+games — including the global handlers that answer "get <anything>".
+
+On SQ3: **1,119 of 1,131 said specs linked to their handler, 2
 unlinked** — and all 3,597 word groups decode against `vocab.000`, so
 the commands come out readable:
 

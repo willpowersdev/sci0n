@@ -15,14 +15,14 @@
   "link_digest": "434e3f6b91280fdb",
   "links_dynamic": 24,
   "links_static": 104,
-  "model_digest": "4c31b37a1b2ee9ab",
+  "model_digest": "c59e02f5f05220e6",
   "models": 191,
   "printer": [
    255,
    0
   ],
   "rooms": 92,
-  "said_blocks": 4782,
+  "said_blocks": 4601,
   "tracked": [
    "advanceFighter.register",
    "blackKnight.view",
@@ -70,14 +70,14 @@
   "link_digest": "0fb94625fa32167f",
   "links_dynamic": 129,
   "links_static": 134,
-  "model_digest": "a8daf673e3c926d0",
+  "model_digest": "d78423557cd84106",
   "models": 180,
   "printer": [
    255,
    0
   ],
   "rooms": 100,
-  "said_blocks": 3011,
+  "said_blocks": 2840,
   "tracked": [
    "Bed.cel",
    "Gator.loop",
@@ -119,11 +119,11 @@
   "link_digest": "fae88b6764183ef7",
   "links_dynamic": 15,
   "links_static": 100,
-  "model_digest": "e88bf5b7c5171e68",
+  "model_digest": "9d87ce20adcae371",
   "models": 247,
   "printer": null,
   "rooms": 121,
-  "said_blocks": 2191,
+  "said_blocks": 2169,
   "tracked": [
    "catWalk.state",
    "global11",
@@ -167,14 +167,14 @@
   "link_digest": "21126913cfe4c32d",
   "links_dynamic": 30,
   "links_static": 85,
-  "model_digest": "cc301295de4cd5c1",
+  "model_digest": "c6eefccef86105e3",
   "models": 161,
   "printer": [
    255,
    0
   ],
   "rooms": 90,
-  "said_blocks": 1571,
+  "said_blocks": 1550,
   "tracked": [
    "agent.loop",
    "backGuard.view",
@@ -204,14 +204,14 @@
   "link_digest": "42839dcd17ee69f0",
   "links_dynamic": 51,
   "links_static": 134,
-  "model_digest": "7be577c71276ce03",
+  "model_digest": "2bae0e015fd83eb2",
   "models": 139,
   "printer": [
    255,
    0
   ],
   "rooms": 109,
-  "said_blocks": 1983,
+  "said_blocks": 1960,
   "tracked": [
    "global102",
    "global105",
@@ -252,14 +252,14 @@
   "link_digest": "6915d27c195cd288",
   "links_dynamic": 7,
   "links_static": 101,
-  "model_digest": "de3e02c2b31cddf6",
+  "model_digest": "b7761dd49a6c4e13",
   "models": 105,
   "printer": [
    255,
    0
   ],
   "rooms": 91,
-  "said_blocks": 1051,
+  "said_blocks": 1012,
   "tracked": [
    "global101",
    "global102",
@@ -298,14 +298,14 @@
   "link_digest": "9d1654555ee88c8e",
   "links_dynamic": 15,
   "links_static": 117,
-  "model_digest": "8f49f7af4c6ae03f",
+  "model_digest": "df801b8e49ef14ec",
   "models": 147,
   "printer": [
    1,
    13
   ],
   "rooms": 96,
-  "said_blocks": 2299,
+  "said_blocks": 2283,
   "tracked": [
    "bendOverS.register",
    "egoEnters.register",
@@ -346,14 +346,14 @@
   "link_digest": "7443680056217a82",
   "links_dynamic": 70,
   "links_static": 104,
-  "model_digest": "5c86ee074bc545a8",
+  "model_digest": "3d2a4254891e2648",
   "models": 99,
   "printer": [
    255,
    0
   ],
   "rooms": 84,
-  "said_blocks": 1144,
+  "said_blocks": 1131,
   "tracked": [
    "bringOnFester.seconds",
    "bucket.cel",

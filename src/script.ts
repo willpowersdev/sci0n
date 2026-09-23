@@ -163,9 +163,19 @@ export class Script {
         this.locals = [];
         for (let i = 0; i < Math.floor(body.length / 2); i++) this.locals.push(u16(body, i * 2));
       } else if (btype === 4) {
+        // Specs are separated by 0xFF, but the block cannot be scanned
+        // a byte at a time looking for one.  A byte below 0xF0 opens a
+        // two-byte word group whose low byte may be anything at all --
+        // including 0xFF -- so the pair has to be stepped over.  The
+        // wildcard `*` is group 0x0fff, and reading its low byte as a
+        // separator cut every pattern using it in half: the head kept a
+        // dangling 0x0f that decoded as the nonexistent group 0x0f00,
+        // and the tail became a fragment starting mid-pattern.
         let s = 0;
         for (let i = 0; i < body.length; i++) {
-          if (body[i] === 0xFF) {
+          const v = body[i];
+          if (v < 0xF0) { i++; continue; }
+          if (v === 0xFF) {
             if (i > s) this.said.push([p + 4 + s, body.subarray(s, i)]);
             s = i + 1;
           }

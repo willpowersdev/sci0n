@@ -24,14 +24,18 @@
  * any word satisfies, and 0xffe is its `!*`, satisfied only by silence.
  *
  * A part is satisfied by containment, not equality: `look/rock` matches
- * "look at the rock" even though part one also holds "at".  What is not
- * elastic is how many parts the pattern has.  A part the pattern leaves
- * out altogether must be empty in what was typed -- which is why `look`
- * does not match "look at the rock" and the game must also write
- * `look/rock` -- while a part written empty matches anything.  The
- * games rely on the difference, and it is why so many patterns end in a
- * bare slash: `/ladder/` is "anything done to the ladder, with
- * anything", where `/ladder` would be "and nothing else".
+ * "look at the rock" even though part one also holds "at".  A part the
+ * pattern does not mention is not looked at either, so `look` matches
+ * "look at the rock" as well -- which is what lets a game write
+ *
+ *   (if (Said 'look>')
+ *       (if (Said '/wall')  ...)
+ *       (if (Said '[/!*]')  ...)   ; just "look" on its own
+ *       (if (Said '/*')     ...))  ; "look" at anything else
+ *
+ * and have the outer test pass for every one of them.  Requiring a part
+ * to be *empty* is what `!*` is for, and `*` is its opposite: some word
+ * must have been said there.
  */
 import type { Parse } from './grammar.ts';
 
@@ -125,6 +129,23 @@ export function parseSaid(spec: Uint8Array): Said {
   return { parts, claim };
 }
 
+/**
+ * Does this expression say the part it sits in was left unsaid?
+ *
+ * `!*` is an assertion about what is *not* there, and making it
+ * optional cannot weaken it: "absent" and "empty" are the same
+ * observation, so `[/!*]` asks exactly what `/!*` does.  Without this
+ * an optional emptiness test would be vacuous, and a game's "just
+ * look on its own" clause would answer for "look at the wall" too.
+ */
+function assertsEmpty(e: Expr): boolean {
+  switch (e.kind) {
+    case 'word': return e.group === NONE;
+    case 'any': case 'all': return e.of.some(assertsEmpty);
+    case 'opt': return assertsEmpty(e.of);
+  }
+}
+
 /** Is every group this expression requires present among `said`? */
 function satisfied(e: Expr, said: Set<number>): boolean {
   switch (e.kind) {
@@ -134,8 +155,7 @@ function satisfied(e: Expr, said: Set<number>): boolean {
       return said.has(e.group);
     case 'any': return e.of.some(x => satisfied(x, said));
     case 'all': return e.of.every(x => satisfied(x, said));
-    // Optional: never a reason to fail.
-    case 'opt': return true;
+    case 'opt': return assertsEmpty(e.of) ? satisfied(e.of, said) : true;
   }
 }
 
@@ -149,13 +169,9 @@ export function saidMatches(said: Said, parse: Parse): boolean {
     // it, and leaving it in would make `!*` impossible to satisfy.
     const groups = new Set([...parse.parts[p]].filter(g => g !== NULL_GROUP));
     const e = said.parts[p];
-    if (e === undefined) {
-      // A part the pattern never mentions must not have been used.
-      if (groups.size) return false;
-      continue;
-    }
-    // A part written empty is a wildcard.
-    if (empty(e)) continue;
+    // A part the pattern does not mention, and one written empty, are
+    // both simply not asked about.
+    if (e === undefined || empty(e)) continue;
     if (!satisfied(e, groups)) return false;
   }
   return true;
