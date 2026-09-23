@@ -50,10 +50,52 @@ export class Screen {
    * leaving the black backdrop it had been drawn onto.
    */
   windows: Array<{ x0: number; y0: number; x1: number; y1: number }> = [];
+  /**
+   * Text written straight onto the picture, which must survive too.
+   *
+   * `Display` draws into the picture rather than into a window of its
+   * own -- the intro's narration is written over the scene, once in
+   * black and once in white to outline it.  SCI erases only what its
+   * sprites covered, so the text stays; restoring the whole picture
+   * each cycle wiped it before anyone could read a word.  Cleared when
+   * a new picture arrives, which is what would have covered it anyway.
+   */
+  overlays: Array<{ x0: number; y0: number; x1: number; y1: number; epoch: number }> = [];
+  /**
+   * Which animation cycle we are in.
+   *
+   * Narration is written twice in the same cycle -- black, then white
+   * over it, which is how the intro outlines its text -- so the pair
+   * has to survive together.  What must not survive is the line before
+   * it, written in an earlier cycle at the same place.
+   */
+  epoch = 0;
+
+  /**
+   * Put the picture back under text written in an earlier cycle.
+   *
+   * Called before new text is written, so each line replaces the last
+   * rather than printing on top of it.
+   */
+  clearStaleOverlays() {
+    const keep: typeof this.overlays = [];
+    for (const o of this.overlays) {
+      if (o.epoch === this.epoch) { keep.push(o); continue; }
+      for (let y = Math.max(0, o.y0); y < Math.min(HEIGHT, o.y1); y++) {
+        const row = y * WIDTH;
+        for (let x = Math.max(0, o.x0); x < Math.min(WIDTH, o.x1); x++)
+          this.visual[row + x] = this.bgVisual[row + x];
+      }
+    }
+    this.overlays = keep;
+    this.dirty = true;
+  }
 
   /** Is this pixel underneath an open window? */
   private covered(x: number, y: number): boolean {
     for (const w of this.windows)
+      if (x >= w.x0 && x < w.x1 && y >= w.y0 && y < w.y1) return true;
+    for (const w of this.overlays)
       if (x >= w.x0 && x < w.x1 && y >= w.y0 && y < w.y1) return true;
     return false;
   }
@@ -63,6 +105,7 @@ export class Screen {
   undither = false;
 
   drawPic(pic: Picture, clear = true) {
+    this.overlays.length = 0;
     if (clear) { this.bgVisual.fill(0xFF); this.bgPriority.fill(0); this.control.fill(0); }
     this.bgVisual.set(pic.visual);
     this.bgPriority.set(pic.priority);
@@ -73,8 +116,9 @@ export class Screen {
 
   /** Put the background back, ready for this frame's cast. */
   restore() {
+    this.epoch++;
     this.priority.set(this.bgPriority);
-    if (!this.windows.length) { this.visual.set(this.bgVisual); return; }
+    if (!this.windows.length && !this.overlays.length) { this.visual.set(this.bgVisual); return; }
     // Everything but what an open window is showing.
     for (let y = 0; y < HEIGHT; y++) {
       const row = y * WIDTH;

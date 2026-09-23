@@ -2093,13 +2093,27 @@ export class PMachine {
     if (!font) return 0;
     if (!haveXY) { x = 0; y = 0; }
     const p = this.port;
-    this.drawText(font, text, p.x + x, p.y + y, fg, Math.min(width, WIDTH - p.x - x));
+    const w = Math.min(width, WIDTH - p.x - x);
+    // Whatever was written in an earlier cycle goes first, so each line
+    // of narration replaces the one before rather than printing over it.
+    this.screen.clearStaleOverlays();
+    const bottom = this.drawText(font, text, p.x + x, p.y + y, fg, w);
+    // Keep it: the next cycle restores the picture, and what was
+    // written on top of it would go with it.
+    // Recorded to the edge of the port rather than to the measured
+    // width: a long word runs past the wrap, and a rectangle that stops
+    // at the width leaves its tail behind when the next line replaces
+    // it.  Clearing a little extra only puts the picture back.
+    this.screen.overlays.push({ x0: p.x + x, y0: p.y + y,
+                                x1: Math.min(WIDTH, p.x + p.w), y1: bottom,
+                                epoch: this.screen.epoch });
     return 0;
   }
 
   /** Draw text, wrapping on spaces inside the given width. */
+  /** Draw wrapped text; returns the y just past the last line. */
   private drawText(font: Font, text: string, x: number, y: number,
-                   colour: number, width: number) {
+                   colour: number, width: number): number {
     const lineHeight = Math.max(8, font.lineHeight);
     const measure = (s: string) => {
       let w = 0;
@@ -2120,6 +2134,7 @@ export class PMachine {
       this.screen.text(font, line, x, cy, colour);
       cy += lineHeight;
     }
+    return cy;
   }
 
   /** The printf subset the scripts use. */
