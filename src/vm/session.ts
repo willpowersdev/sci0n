@@ -58,7 +58,18 @@ export class Session {
     this.started_at = 0;
     this.ticksIssued = 0;
   }
-  private get ticksPerSecond() { return this.rate * this.vm.minWait; }
+  /**
+   * What one place on the speed control is worth in ticks.
+   *
+   * The clock's basis, not the game's cycle rate: at the default 20 the
+   * clock issues sixty ticks a second, which is real time.  This used to
+   * read `this.vm.minWait`, which tied the basis to the cost of a
+   * `Wait(0)` -- so answering the games' speed test honestly would have
+   * silently slowed every clock in the interpreter by the same factor.
+   * The two are separate questions and are now separate numbers.
+   */
+  private static readonly TICKS_PER_PLACE = 3;
+  private get ticksPerSecond() { return this.rate * Session.TICKS_PER_PLACE; }
   instructions = 0;
   frames = 0;
   /**

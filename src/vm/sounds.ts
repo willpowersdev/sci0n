@@ -68,6 +68,8 @@ interface Entry {
   playing: boolean;
   /** Set once `signal` has been marked finished, so it is reported once. */
   reported: boolean;
+  /** How many of the piece's cues have already been handed over. */
+  cueIndex: number;
   /** The tick the piece started on, which is what decides when it ends. */
   startTick: number;
 }
@@ -81,6 +83,8 @@ export class SoundBox {
   muted = false;
   /** Pieces that have finished since the last sweep, by handle. */
   private ended: number[] = [];
+  /** Cues come due, by handle, oldest first. */
+  private cued: Array<{ handle: number; signal: number }> = [];
 
   /** True when the game speaks SCI01's renumbered subops. */
   sci01 = false;
@@ -124,6 +128,17 @@ export class SoundBox {
   get available() { return this.bank !== null; }
   /** How many pieces are sounding, for the HUD and for tests. */
   get active() { return [...this.live.values()].filter(e => e.playing).length; }
+  /**
+   * Which resources are sounding.
+   *
+   * "Is anything playing" cannot tell one piece from another, and the
+   * question worth asking about a game's audio is usually about a
+   * particular piece -- whether the music that comes *after* the title
+   * is audible, say, which the title music satisfies by itself.
+   */
+  get playing(): number[] {
+    return [...this.live.values()].filter(e => e.playing).map(e => e.number);
+  }
 
   private gainFor() { return this.muted ? 0 : this.masterVolume / 15; }
 
@@ -140,7 +155,7 @@ export class SoundBox {
     const player = new Player(sound, this.bank);
     player.gain = this.gainFor();
     this.live.set(handle, { handle, number, sound, player, playing: false,
-                            reported: false, startTick: 0 });
+                            reported: false, cueIndex: 0, startTick: 0 });
   }
 
   play(handle: number, number: number, loop: boolean, atTick = 0) {
@@ -152,6 +167,8 @@ export class SoundBox {
     e.player.gain = this.gainFor();
     e.playing = true;
     e.reported = false;
+    // A piece played again cues again, from its first.
+    e.cueIndex = 0;
     e.startTick = atTick;
   }
 
@@ -206,6 +223,24 @@ export class SoundBox {
    * allowed to start a sound yet.
    */
   pump(nowTick: number) {
+    /**
+     * Cues first: a piece that signals on its very last tick must be
+     * heard from before it is declared over, or the script gets the
+     * end of the piece and never the cue that came with it.
+     *
+     * Only one cue per piece per sweep.  `signal` is a single slot that
+     * the game's own `Sound` class reads and clears, so handing over
+     * two at once loses the first -- the second would simply overwrite
+     * it before the script had looked.
+     */
+    for (const e of this.live.values()) {
+      if (!e.playing) continue;
+      const cues = e.sound.cues;
+      if (e.cueIndex >= cues.length) continue;
+      if (nowTick - e.startTick < cues[e.cueIndex].tick) continue;
+      this.cued.push({ handle: e.handle, signal: cues[e.cueIndex].signal });
+      e.cueIndex++;
+    }
     for (const e of this.live.values()) {
       if (!e.playing || e.player.loop || e.reported) continue;
       // `ticks` is the piece's own length, in the same sixtieths the
@@ -226,6 +261,18 @@ export class SoundBox {
   takeEnded(): number[] {
     const out = this.ended;
     this.ended = [];
+    return out;
+  }
+
+  /**
+   * Cues that have come due since this was last called.
+   *
+   * The machine writes each one to `signal` on the game's own sound
+   * object, which is where a script polling for it will look.
+   */
+  takeCues(): Array<{ handle: number; signal: number }> {
+    const out = this.cued;
+    this.cued = [];
     return out;
   }
 

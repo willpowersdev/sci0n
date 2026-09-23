@@ -93,6 +93,14 @@ for (const name of ['SQ3', 'CAMELOT', 'LSL2', 'COLONEL', 'QFG2']) {
  * So this follows Camelot past the title sequence and insists on audio
  * from a piece that starts later, which is the part no first-piece
  * check can see.
+ *
+ * What counts as "later" is the piece, not the clock.  Pinning it to a
+ * tick made the check depend on the title sequence taking exactly as
+ * long as it did the day it was written: correcting the machine class
+ * the games' own speed test reports lengthened that sequence by nine
+ * seconds, and the one keypress that used to choose "See the Intro"
+ * from an already-open menu now only opened the menu.  The music was
+ * fine; the test was reading the clock.
  */
 {
   const g = new Game(nodeSource(join(ROOT, 'CAMELOT')));
@@ -103,17 +111,22 @@ for (const name of ['SQ3', 'CAMELOT', 'LSL2', 'COLONEL', 'QFG2']) {
   const buf = new Float32Array(2048);
   let st = s.tick();
   let titlePeak = 0, introPeak = 0, introPlays = 0;
-  // The title sequence runs about a minute; Enter takes the menu on.
-  for (let i = 0; i < 7000 && st.running; i++) {
-    if (i === 3300) s.key(0x0D);
+  /** The title music, which is the piece this check must look past. */
+  const TITLE_MUSIC = 1;
+  // Keep offering Enter: one press opens the menu, the next takes
+  // "See the Intro", and pressing on costs nothing once the intro runs.
+  for (let i = 0; i < 9000 && st.running; i++) {
+    if (i % 300 === 0) s.key(0x0D);
     clock += 1000 / 60;
     st = s.tick();
     if (!box.active) continue;
     box.mix(buf);
     let p = 0;
     for (const v of buf) p = Math.max(p, Math.abs(v));
-    if (i < 3300) titlePeak = Math.max(titlePeak, p);
-    else { introPeak = Math.max(introPeak, p); if (p > 0.02) introPlays++; }
+    // Judge each block by what is actually sounding in it.
+    const later = box.playing.some(n => n !== TITLE_MUSIC);
+    if (later) { introPeak = Math.max(introPeak, p); if (p > 0.02) introPlays++; }
+    else titlePeak = Math.max(titlePeak, p);
   }
   const ok = introPeak > 0.02;
   checked = ok;

@@ -30,6 +30,14 @@ export interface Channel {
   devices: number;
 }
 
+/** A point in a piece where the music tells the script where it is. */
+export interface Cue {
+  /** Absolute tick, 60 per second. */
+  tick: number;
+  /** The value the script reads back as `signal`. */
+  signal: number;
+}
+
 export interface Sound {
   /** 8 or 16, whichever parsed. */
   channelCount: number;
@@ -39,7 +47,29 @@ export interface Sound {
   ticks: number;
   /** Bytes of digitised audio after the end marker, if any. */
   digital: Uint8Array | null;
+  /** Where the piece signals the script, in order. */
+  cues: Cue[];
+  /** Tick the piece loops back to, if it marked one. */
+  loopTick: number | null;
 }
+
+/**
+ * The channel SCI reserved for talking to the game rather than to the
+ * synthesiser.  A program change here is not an instrument.
+ */
+export const SIGNAL_CHANNEL = 0x0F;
+/** Program change on the signal channel: the low nibble of 0xCF. */
+const SIGNAL_STATUS = 0xC0 | SIGNAL_CHANNEL;
+/**
+ * The signal that marks the loop point instead of cueing the script.
+ *
+ * SCI0-late and everything after it keep this one to themselves; only
+ * the earliest SCI0 passed it on.  (ScummVM also lets it through for
+ * KQ4's sound 106, whose scripts wait on signal 127 because Sierra
+ * changed the driver without updating them -- untested here, as KQ4
+ * does not yet reach its title.)
+ */
+const SIGNAL_LOOP = 127;
 
 /** Device bit for the AdLib/OPL2 arrangement. */
 export const DEVICE_ADLIB = 0x04;
@@ -108,5 +138,20 @@ export function parseSound(d: Uint8Array, header?: number): Sound | null {
   // mismatch is worth not inventing data for.
   const tail = d.length - r.end;
   const digital = (d[0] !== 0 && tail > 2) ? d.subarray(r.end) : null;
-  return { channelCount, channels, events, ticks: r.tick, digital };
+  /**
+   * The cues, read straight out of the stream.
+   *
+   * A script steps its scene on by polling the sound object's `signal`,
+   * so these are what make a title sequence follow its music rather
+   * than a stopwatch.  They are program changes on channel 15, whose
+   * "instrument" is the value the script reads back.
+   */
+  const cues: Cue[] = [];
+  let loopTick: number | null = null;
+  for (const e of events) {
+    if (e.status !== SIGNAL_STATUS) continue;
+    if (e.a === SIGNAL_LOOP) { loopTick ??= e.tick; continue; }
+    cues.push({ tick: e.tick, signal: e.a });
+  }
+  return { channelCount, channels, events, ticks: r.tick, digital, cues, loopTick };
 }

@@ -268,6 +268,20 @@ export class PMachine {
    */
   pumpSounds() {
     this.sounds.pump(this.ticks);
+    /**
+     * Cues the music sent, before the news that it finished.
+     *
+     * A piece marks points in itself -- SCI put them in the stream as
+     * program changes on channel 15 -- and a script steps its scene on
+     * by polling for them.  Camelot's title sequence is built that way:
+     * `credits::doit` watches `titleMusic.prevSignal` for 20, which the
+     * piece sends 19.4 seconds in, and only the stopwatch fallbacks ran
+     * while these were being dropped.
+     */
+    for (const { handle, signal } of this.sounds.takeCues()) {
+      const obj = this.resolveTarget(null, handle);
+      if (obj) this.setProp(obj, 'signal', signal);
+    }
     for (const handle of this.sounds.takeEnded()) {
       const obj = this.resolveTarget(null, handle);
       if (obj) this.setProp(obj, 'signal', SIGNAL_FINISHED);
@@ -1165,15 +1179,27 @@ export class PMachine {
   ticks = 0;
   private lastWait = 0;
   /**
-   * Ticks a `Wait(0)` is held for.
+   * Ticks a `Wait(0)` is held for -- the machine we claim to be.
    *
-   * SCI0 games ask to wait zero and let the machine set the pace -- that
-   * is what their speed test was measuring -- so on anything modern the
-   * game runs as fast as the interpreter can be driven. Holding a zero
-   * wait for a few ticks puts the cycle rate back where the hardware of
-   * the day would have left it. Three ticks is twenty cycles a second.
+   * SCI0 games ask to wait zero and let the machine set the pace, and
+   * they measure the answer: `SpeedTst` counts its own cycles for one
+   * second and files the machine under 0, 1 or 2 at the boundaries 30
+   * and 60 cycles a second.  Those three classes are the three machines
+   * the games were sold for, so the boundaries name them: an 8088 XT,
+   * a 286 AT, and a 386.
+   *
+   * Two ticks is thirty cycles a second, which is the bottom of the
+   * middle class -- a 286 AT.  Three ticks was twenty, and every SCI0
+   * game read that as slower than an XT: Camelot's title sequence then
+   * turns off every picture transition and skips one of its credit
+   * screens, because those are exactly the corners a machine that slow
+   * was expected to cut.
+   *
+   * This is only ever consulted for `Wait(0)`.  In play the games name
+   * their own interval -- Camelot waits 6 and 1, SQ3 waits 5 and 1 --
+   * so the pace of the game itself does not pass through here.
    */
-  minWait = 3;
+  minWait = 2;
 
   /** One tick is 1/60 s; the host advances it as frames are displayed. */
   advanceClock(n = 1) { this.ticks += n; }
