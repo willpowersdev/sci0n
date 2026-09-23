@@ -68,6 +68,8 @@ interface Entry {
   playing: boolean;
   /** Set once `signal` has been marked finished, so it is reported once. */
   reported: boolean;
+  /** The tick the piece started on, which is what decides when it ends. */
+  startTick: number;
 }
 
 export class SoundBox {
@@ -137,10 +139,11 @@ export class SoundBox {
     if (!sound) return;
     const player = new Player(sound, this.bank);
     player.gain = this.gainFor();
-    this.live.set(handle, { handle, number, sound, player, playing: false, reported: false });
+    this.live.set(handle, { handle, number, sound, player, playing: false,
+                            reported: false, startTick: 0 });
   }
 
-  play(handle: number, number: number, loop: boolean) {
+  play(handle: number, number: number, loop: boolean, atTick = 0) {
     this.init(handle, number);
     const e = this.live.get(handle);
     if (!e) return;
@@ -149,6 +152,7 @@ export class SoundBox {
     e.player.gain = this.gainFor();
     e.playing = true;
     e.reported = false;
+    e.startTick = atTick;
   }
 
   pause(handle: number, on: boolean) {
@@ -192,6 +196,28 @@ export class SoundBox {
   }
 
   /**
+   * Move every sounding piece along the game's clock.
+   *
+   * A piece ends because its time is up, not because somebody rendered
+   * it: scripts wait on a sound finishing to move a scene on, and
+   * Camelot's intro does exactly that.  Deciding it from the mixer
+   * meant the intro stopped on its first scene whenever nothing was
+   * pulling audio -- a headless run, or a browser that has not been
+   * allowed to start a sound yet.
+   */
+  pump(nowTick: number) {
+    for (const e of this.live.values()) {
+      if (!e.playing || e.player.loop || e.reported) continue;
+      // `ticks` is the piece's own length, in the same sixtieths the
+      // machine counts.
+      if (nowTick - e.startTick < e.sound.ticks) continue;
+      e.playing = false;
+      e.reported = true;
+      this.ended.push(e.handle);
+    }
+  }
+
+  /**
    * Handles whose piece has ended since this was last called.
    *
    * The machine turns these into `signal = -1` on the game's own object,
@@ -218,10 +244,9 @@ export class SoundBox {
       if (!e.playing) continue;
       const n = e.player.advance(scratch);
       for (let i = 0; i < n; i++) out[i] += scratch[i];
-      if (e.player.finished) {
-        e.playing = false;
-        if (!e.reported) { e.reported = true; this.ended.push(e.handle); }
-      }
+      // The mixer does not decide when a piece is over -- `pump` does,
+      // off the game's clock -- so a player that has run out simply
+      // contributes nothing more.
     }
     // Several pieces at once would otherwise sum past full scale.
     for (let i = 0; i < out.length; i++) out[i] = Math.tanh(out[i]);

@@ -26,8 +26,15 @@ import { WIDTH, HEIGHT } from '../src/vm/screen.ts';
 import { ROOT } from './games.ts';
 
 const ENTER = 0x0D;
-/** Long enough for the logos and the title to go by. */
-const TO_MENU = 700;
+/**
+ * Frames to allow for the logos, the title and the credits.
+ *
+ * Generous, and not waited out: the run stops as soon as the menu
+ * opens.  Timing is the game's own and moves when the clock is fixed --
+ * a fixed count here quietly became "somewhere in the credits" the day
+ * `GetTime` started answering in seconds.
+ */
+const TO_MENU = 6000;
 const LABELS = ['See the Intro', 'Start New Game', 'Restore Game'];
 
 function nodeSource(dir: string): ResourceSource {
@@ -75,11 +82,20 @@ const s = new Session(g, new Index(g));
 let clock = 0;
 s.now = () => clock;
 const step = () => { clock += 1000 / 60; return s.tick(); };
-let st = s.tick();
-for (let i = 0; i < TO_MENU && st.running; i++) st = step();
+/** Run until a window opens, which is the menu appearing. */
+function toMenu(sess: Session, run: () => { running: boolean; picture: number }) {
+  let last = sess.tick();
+  for (let i = 0; i < TO_MENU && last.running; i++) {
+    last = run();
+    if (sess.screen.windows.length) break;
+  }
+  return last;
+}
+
+let st = toMenu(s, step);
 
 let failed = 0, checked = 0;
-console.log(`CAMELOT  at ${(TO_MENU / 60).toFixed(1)}s, picture ${st.picture}`);
+console.log(`CAMELOT  menu open at picture ${st.picture}`);
 for (const label of LABELS) {
   checked++;
   const shown = onScreen(s, label);
@@ -112,8 +128,7 @@ console.log(`  the keyboard ${byKey ? `takes the game on to picture ${st.picture
   let clock2 = 0;
   w.now = () => clock2;
   const step2 = () => { clock2 += 1000 / 60; return w.tick(); };
-  let st2 = w.tick();
-  for (let i = 0; i < TO_MENU && st2.running; i++) st2 = step2();
+  let st2 = toMenu(w, step2);
   const was = st2.picture;
   // The dialog centres itself; these are the first button's own pixels.
   const port = (w.vm as any).port;

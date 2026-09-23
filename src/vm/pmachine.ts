@@ -245,6 +245,7 @@ export class PMachine {
    * sit on the same state for ever until it reads -1 here.
    */
   pumpSounds() {
+    this.sounds.pump(this.ticks);
     for (const handle of this.sounds.takeEnded()) {
       const obj = this.resolveTarget(null, handle);
       if (obj) this.setProp(obj, 'signal', SIGNAL_FINISHED);
@@ -1202,7 +1203,17 @@ export class PMachine {
       case 'Load': this.script(args[1] ?? 0); return args[1] ?? 0;
 
       // --- time -------------------------------------------------------
-      case 'GetTime': return this.ticks & 0x7FFF;
+      /**
+       * The clock, in the unit asked for.
+       *
+       * `GetTime()` is ticks since the game started; `GetTime(1)` is
+       * the time of day in seconds.  Returning ticks for both made
+       * every timed state run sixty times fast: `Script::doit` counts
+       * its `seconds` down once per change in this value, so a scene
+       * meant to hold for five seconds was gone in five cycles, and the
+       * credits went by too quickly to read.
+       */
+      case 'GetTime': return (a0 === 1 ? Math.floor(this.ticks / 60) : this.ticks) & 0x7FFF;
       case 'Wait': {
         // Reached only once the wait is satisfied -- the interpreter loop
         // holds the instruction back until then -- so this reports how
@@ -1790,7 +1801,7 @@ export class PMachine {
             if (obj) {
               // `loop` counts repeats; -1 is what a script sets to mean
               // "keep going", and anything else plays the piece once.
-              this.sounds.play(a1, num, s16(u16(this.prop(obj, 'loop'))) === -1);
+              this.sounds.play(a1, num, s16(u16(this.prop(obj, 'loop'))) === -1, this.ticks);
               this.setProp(obj, 'handle', a1);
               this.setProp(obj, 'signal', 0);
             }
@@ -2071,22 +2082,46 @@ export class PMachine {
    * because guessing wrong reads the next code as a value and turns the
    * rest of the arguments into nonsense.
    */
+  /**
+   * Write text straight onto the picture.
+   *
+   * The parameter codes are SCI0's own, from `sci.sh`: 100 dsCOORD
+   * (x, y), 101 dsALIGN, 102 dsCOLOR, 103 dsBACKGROUND (-1 for none),
+   * 104 dsDISABLED, 105 dsFONT, 106 dsWIDTH, 107 dsSAVEPIXELS (no
+   * parameter, returns a handle) and 108 dsRESTOREPIXELS.
+   *
+   * Reading 105 as the width, as this did, is not a small slip: the
+   * intro writes each line twice at the same place, once in an outline
+   * font and once in a face font over it.  Taking both font numbers as
+   * widths drew one font twice, wrapped at two different points, which
+   * is why the narration came out doubled and unreadable.  Ignoring 103
+   * is why the lines that should sit in a panel had nothing behind them.
+   */
   private display(args: number[], fromScript = 0): number {
     let i = 0;
     let text: string;
     if (this.strings.has(args[0]) || isRef(args[0])) { text = this.stringAt(args[0], fromScript); i = 1; }
     else { text = this.textLines(args[0])[args[1] ?? 0] ?? ''; i = 2; }
 
-    let x = 0, y = 0, fg = 15, width = WIDTH, haveXY = false;
+    let x = 0, y = 0, fg = 15, bg = -1, align = 0, width = 0, haveXY = false, save = false;
     for (; i < args.length;) {
       const code = args[i++];
-      if (code === 100) { x = args[i++]; y = args[i++]; haveXY = true; }
-      else if (code === 101) { this.dsFont = args[i++]; }
+      if (code === 100) { x = s16(u16(args[i++])); y = s16(u16(args[i++])); haveXY = true; }
+      else if (code === 101) { align = s16(u16(args[i++])); }
       else if (code === 102) { fg = args[i++] & 0x0F; }
-      else if (code === 103) { i++; }                 // background
-      else if (code === 104 || code === 106 || code === 108) { i++; }
-      else if (code === 105) { width = args[i++]; }
-      else if (code === 107 || code === 121) { /* no value */ }
+      else if (code === 103) { bg = s16(u16(args[i++])); }
+      else if (code === 104) { i++; }                    // grey text
+      else if (code === 105) { this.dsFont = args[i++]; }
+      else if (code === 106) { width = s16(u16(args[i++])); }
+      else if (code === 107) { save = true; }
+      else if (code === 108) {
+        // Put back what was saved; everything else is ignored.
+        const h = args[i++];
+        const kept = this.savedBits.get(h);
+        if (kept) { this.screen.restoreRect(kept); this.savedBits.delete(h); }
+        this.screen.protectionChanged();
+        return 0;
+      }
       else break;
     }
     if (!text) return 0;
@@ -2094,47 +2129,77 @@ export class PMachine {
     if (!font) return 0;
     if (!haveXY) { x = 0; y = 0; }
     const p = this.port;
-    const w = Math.min(width, WIDTH - p.x - x);
-    // Whatever was written in an earlier cycle goes first, so each line
-    // of narration replaces the one before rather than printing over it.
+    const w = width > 0 ? Math.min(width, WIDTH - p.x - x) : WIDTH - p.x - x;
+    const px = p.x + x, py = p.y + y;
+
+    // Measure before drawing: the area is needed for the background,
+    // for saving under, and for putting the picture back later.
+    const height = this.textHeight(font, text, w);
+    const rect = { x0: px, y0: py, x1: Math.min(WIDTH, px + w), y1: Math.min(HEIGHT, py + height) };
+    let handle = 0;
+    if (save) {
+      handle = this.alloc();
+      this.savedBits.set(handle, this.screen.save(rect.x0, rect.y0, rect.x1, rect.y1));
+    }
+    // Text written in an earlier cycle goes first, so each line replaces
+    // the one before rather than printing over it.
     this.screen.clearStaleOverlays();
-    const bottom = this.drawText(font, text, p.x + x, p.y + y, fg, w);
-    // Keep it: the next cycle restores the picture, and what was
-    // written on top of it would go with it.
-    // Recorded to the edge of the port rather than to the measured
-    // width: a long word runs past the wrap, and a rectangle that stops
-    // at the width leaves its tail behind when the next line replaces
-    // it.  Clearing a little extra only puts the picture back.
-    this.screen.overlays.push({ x0: p.x + x, y0: p.y + y,
-                                x1: Math.min(WIDTH, p.x + p.w), y1: bottom,
-                                epoch: this.screen.epoch });
+    if (bg >= 0) this.screen.fill(rect.x0, rect.y0, rect.x1, rect.y1, bg & 0x0F);
+    this.drawText(font, text, px, py, fg, w, align);
+    // Keep it: the next cycle restores the picture, and anything written
+    // on top of it would go with it.
+    this.screen.overlays.push({ ...rect, epoch: this.screen.epoch });
     this.screen.protectionChanged();
-    return 0;
+    return handle;
+  }
+
+  /** Pixels a script asked to be saved, by handle. */
+  private savedBits = new Map<number, { x0: number; y0: number; w: number; h: number; buf: Uint8Array }>();
+
+  /** How tall `text` comes out when wrapped to `width`. */
+  private textHeight(font: Font, text: string, width: number): number {
+    const lineHeight = Math.max(8, font.lineHeight);
+    let lines = 0;
+    for (const para of text.split('\n')) {
+      let line = '';
+      for (const word of para.split(' ')) {
+        const next = line ? `${line} ${word}` : word;
+        if (line && this.measure(font, next) > width) { lines++; line = word; } else line = next;
+      }
+      lines++;
+    }
+    return lines * lineHeight;
+  }
+
+  private measure(font: Font, s: string): number {
+    let w = 0;
+    for (const ch of s) w += font.chars[ch.charCodeAt(0)]?.width ?? 0;
+    return w;
   }
 
   /** Draw text, wrapping on spaces inside the given width. */
   /** Draw wrapped text; returns the y just past the last line. */
   private drawText(font: Font, text: string, x: number, y: number,
-                   colour: number, width: number): number {
+                   colour: number, width: number, align = 0): number {
     const lineHeight = Math.max(8, font.lineHeight);
-    const measure = (s: string) => {
-      let w = 0;
-      for (const ch of s) w += font.chars[ch.charCodeAt(0)]?.width ?? 0;
-      return w;
-    };
     let cy = y;
+    /** Place one line according to the alignment asked for. */
+    const put = (line: string) => {
+      const w = this.measure(font, line);
+      const lx = align > 0 ? x + Math.max(0, (width - w) >> 1)
+               : align < 0 ? x + Math.max(0, width - w)
+               : x;
+      this.screen.text(font, line, lx, cy, colour);
+      cy += lineHeight;
+    };
     for (const para of text.split('\n')) {
       let line = '';
       for (const word of para.split(' ')) {
         const next = line ? `${line} ${word}` : word;
-        if (line && measure(next) > width) {
-          this.screen.text(font, line, x, cy, colour);
-          cy += lineHeight;
-          line = word;
-        } else line = next;
+        if (line && this.measure(font, next) > width) { put(line); line = word; }
+        else line = next;
       }
-      this.screen.text(font, line, x, cy, colour);
-      cy += lineHeight;
+      put(line);
     }
     return cy;
   }
