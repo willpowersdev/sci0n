@@ -50,19 +50,18 @@
         color:var(--accent);background:var(--panel);border-radius:4px;cursor:pointer}
   #play:hover{background:var(--accent);color:#08080c}
   #play[disabled]{opacity:.4;cursor:default;border-color:var(--line);color:var(--dim)}
-  #quit{position:fixed;top:8px;right:10px;z-index:5;opacity:.25}
-  #quit:hover{opacity:1}
+  /* One row, laid out rather than each control placed by hand: a select
+     is as wide as its longest option, so a fixed offset for its
+     neighbour only holds until the wording changes. */
+  #playbar{position:fixed;top:8px;right:10px;z-index:5;display:flex;gap:8px;align-items:center}
+  #playbar > *{opacity:.25}
+  #playbar > *:hover,#playbar > *:focus{opacity:1}
   #hud{position:fixed;bottom:6px;left:10px;z-index:5;color:var(--dim);
        font:11px ui-monospace,Menlo,monospace;opacity:.5}
   /* Focused but invisible: it exists to catch typing and dictation. */
   #dictate{position:fixed;top:0;left:0;width:2px;height:2px;opacity:0;
            border:0;padding:0;z-index:1}
-  #speed{position:fixed;top:8px;right:180px;z-index:5;opacity:.25}
-  #speed:hover,#speed:focus{opacity:1}
-  #dither{position:fixed;top:8px;right:330px;z-index:5;opacity:.25}
-  #dither:hover{opacity:1}
-  #mic{position:fixed;top:8px;right:60px;z-index:5;opacity:.25}
-  #mic:hover{opacity:1}
+
   #mic.on{opacity:1;border-color:var(--accent);color:var(--accent)}
 </style>
 <div id="side">
@@ -87,17 +86,19 @@
   characters it receives are forwarded to the game as keystrokes.
 -->
 <input id="dictate" hidden autocomplete="off" autocapitalize="off" spellcheck="false">
-<select id="speed" hidden title="game cycles per second">
-  <option value="10">10 cps — slow</option>
-  <option value="15">15 cps</option>
-  <option value="20" selected>20 cps — period</option>
-  <option value="30">30 cps</option>
-  <option value="60">60 cps — fast</option>
-  <option value="600">skip intro — as fast as it will go</option>
-</select>
-<button id="dither" hidden title="how the EGA's dither pairs are shown: blended into one colour, or alternating as the hardware did">▦ blended</button>
-<button id="mic" hidden title="put the cursor in the dictation field, then press fn twice">🎤 dictation</button>
-<button id="quit" hidden>exit</button>
+<div id="playbar">
+  <button id="dither" hidden title="how the EGA's dither pairs are shown: blended into one colour, or alternating as the hardware did">▦ blended</button>
+  <select id="speed" hidden title="game cycles per second; the period rate is 20">
+    <option value="10">10 cps</option>
+    <option value="15">15 cps</option>
+    <option value="20" selected>20 cps</option>
+    <option value="30">30 cps</option>
+    <option value="60">60 cps</option>
+    <option value="600">skip intro</option>
+  </select>
+  <button id="mic" hidden title="put the cursor in the dictation field, then press fn twice">🎤 dictation</button>
+  <button id="quit" hidden>exit</button>
+</div>
 <div id="hud" hidden></div>
 <div style="display:none">
 </div>
