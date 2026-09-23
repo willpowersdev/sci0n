@@ -11,14 +11,38 @@
  * still renders something letter-shaped whenever the two widths need
  * the same number of bytes per row, which is most of the time.
  *
- *   cursor: u16 hotspotX, u16 hotspotY, 16x u16 plane A, 16x u16 plane B.
- *           A is the AND mask, so A=1 keeps the background: A=1 ->
- *           transparent; A=0,B=0 -> black; A=0,B=1 -> white.
+ *   cursor: u16/flag header, 16x u16 plane A, 16x u16 plane B.
+ *
+ * A is the AND mask, so A=1 keeps the background: A=1 -> transparent;
+ * A=0,B=0 -> black; A=0,B=1 -> white.
+ *
+ * Both masks set at once is a fourth case the hardware inverted the
+ * background for, and which the video driver drew as white in SCI0 and
+ * grey in SCI1.  It is left transparent here: no SCI0 cursor in these
+ * games sets both bits anywhere, and the later ones that do look plainly
+ * wrong drawn white -- Quest for Glory II's walking figure turns into a
+ * white disc with the figure lost inside it.
  *
  * The sense of the AND mask is worth stating because getting it the
  * wrong way round still produces a plausible-looking bitmap -- SQ3's
  * arrow becomes a black square with an arrow-shaped hole -- so it is
  * settled by looking at the result, not by the byte layout alone.
+ *
+ * The header is not always a hotspot.  An SCI0 cursor has no
+ * coordinates in it at all: a set byte 3 means "put the hotspot in the
+ * middle" and anything else means the top left.  Later SCI does store
+ * a real pair there, and both kinds turn up in these games -- QFG2
+ * writes (7,7), KQ4 writes the flag, and Colonel's Bequest writes
+ * (448,320), which is not a position inside a sixteen-pixel square and
+ * never was.
+ *
+ * So the pair is believed only when it lands inside the cursor, and
+ * the flag is read otherwise.  That is not a guess about which version
+ * wrote the file: a hotspot outside the bitmap is meaningless whatever
+ * wrote it.  It puts every cursor in the eight games where it belongs,
+ * and the two it moves are both 997 -- the one a game shows while it
+ * is busy, which wants to be centred precisely because it is not
+ * pointing at anything.
  *
  * Note the char header is height first, then width -- the opposite order
  * to the way every other part of the format reports a size.
@@ -81,8 +105,14 @@ export class Cursor {
   pixels: Int8Array;
 
   constructor(data: Uint8Array) {
-    this.hotspotX = u16(data, 0);
-    this.hotspotY = u16(data, 2);
+    const hx = u16(data, 0), hy = u16(data, 2);
+    if (hx < CURSOR_SIZE && hy < CURSOR_SIZE) {
+      this.hotspotX = hx;
+      this.hotspotY = hy;
+    } else {
+      const centred = data[3] !== 0;
+      this.hotspotX = this.hotspotY = centred ? CURSOR_SIZE >> 1 : 0;
+    }
     this.pixels = new Int8Array(CURSOR_SIZE * CURSOR_SIZE);
     for (let y = 0; y < CURSOR_SIZE; y++) {
       const a = u16(data, 4 + y * 2);

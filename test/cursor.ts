@@ -23,7 +23,7 @@ import { Game, type ResourceSource } from '../src/resources.ts';
 import { Index } from '../src/script.ts';
 import { Session } from '../src/vm/session.ts';
 import { WIDTH } from '../src/vm/screen.ts';
-import { CURSOR_SIZE } from '../src/font.ts';
+import { Cursor, CURSOR_SIZE } from '../src/font.ts';
 import { ROOT } from './games.ts';
 
 const ENTER = 0x0D;
@@ -139,6 +139,62 @@ for (const name of ['CAMELOT', 'SQ3']) {
   if (!both) failed++;
   console.log(`  ${both ? 'ok  ' : 'FAIL'} the game asked for ${[...kinds].sort().join(', ') || 'no cursor at all'}` +
     `${both ? ' -- the arrow and the busy one' : ` -- EXPECTED BOTH ${ARROW} AND ${BUSY}`}`);
+}
+
+/**
+ * Where a cursor points.
+ *
+ * An SCI0 cursor carries no hotspot coordinates at all.  Its first four
+ * bytes are a flag: set byte 3 means "centre it", anything else means
+ * the top left.  Reading those bytes as a coordinate pair -- which is
+ * what later SCI does put there -- gave Colonel's Bequest a hotspot of
+ * (448,320), which is not a position inside a sixteen-pixel square.
+ *
+ * So the pair is believed only when it lands inside the bitmap.  That
+ * invariant is the check: a hotspot outside the cursor is meaningless
+ * whoever wrote the file, and it needs no fixture to state.
+ *
+ * The two cursors it moves are worth naming, because they are not
+ * arbitrary: both are 997, the one a game puts up while it is busy.
+ * That one wants to be centred precisely because it is not pointing at
+ * anything.
+ */
+{
+  console.log('\n=== hotspots ===');
+  let outside = 0, seen = 0;
+  const centred: string[] = [];
+  for (const name of readdirSync(ROOT).sort()) {
+    let g: Game;
+    try { g = new Game(nodeSource(join(ROOT, name))); } catch { continue; }
+    for (const r of g.byType('cursor')) {
+      const d = g.tryData('cursor', r.number);
+      if (!d || d.length !== 68) continue;
+      let cu: Cursor;
+      try { cu = new Cursor(d); } catch { continue; }
+      seen++;
+      if (cu.hotspotX >= CURSOR_SIZE || cu.hotspotY >= CURSOR_SIZE ||
+          cu.hotspotX < 0 || cu.hotspotY < 0) {
+        outside++;
+        console.log(`  ${name} cursor ${r.number}: HOTSPOT ${cu.hotspotX},${cu.hotspotY} IS OUTSIDE THE BITMAP`);
+      }
+      // Which ones had no usable pair and fell back to the flag.  A
+      // stored (8,8) is an ordinary hotspot -- several of King's Quest
+      // V's have it -- so asking "is it centred" would catch those too.
+      const storedX = d[0] | (d[1] << 8), storedY = d[2] | (d[3] << 8);
+      if (storedX >= CURSOR_SIZE || storedY >= CURSOR_SIZE)
+        centred.push(`${name}.${r.number}`);
+    }
+  }
+  checked++;
+  if (outside) failed++;
+  console.log(`  ${outside ? 'FAIL' : 'ok  '} all ${seen} cursors point inside themselves`);
+
+  checked++;
+  // Every cursor that falls back to the flag is the busy one.
+  const allBusy = centred.length > 0 && centred.every(c => c.endsWith('.997'));
+  if (!allBusy) failed++;
+  console.log(`  ${allBusy ? 'ok  ' : 'FAIL'} the ones with no usable pair are ${centred.join(', ') || 'none'}` +
+    `${allBusy ? ' -- the busy cursor, centred by its flag' : ' -- EXPECTED ONLY 997'}`);
 }
 
 console.log(`\n${checked - failed}/${checked} cursor checks passed`);
