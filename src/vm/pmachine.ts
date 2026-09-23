@@ -1333,7 +1333,7 @@ export class PMachine {
 
       // --- text and windows ---------------------------------------------
       case 'DrawStatus': {
-        this.screen.status = this.stringAt(a0);
+        this.screen.status = this.stringAt(a0, f?.scriptNo);
         return 0;
       }
       /**
@@ -1345,16 +1345,22 @@ export class PMachine {
        * eight pixels wide with its text outside it.
        */
       case 'TextSize': {
-        const f = this.font(args[2] ?? 0) ?? this.font(0);
-        const t = this.stringAt(a1);
+        // Named `fnt`, not `f`: the frame is also called `f` here, and
+        // shadowing it sent `stringAt` looking in script 0.  It then
+        // measured whatever sat at that offset in the wrong resource --
+        // "0.001" where the caller meant "M" -- and `DEdit::setSize`
+        // multiplied the five characters by its 45-character limit into
+        // an input box 1252 pixels wide.
+        const fnt = this.font(args[2] ?? 0) ?? this.font(0);
+        const t = this.stringAt(a1, f?.scriptNo);
         const maxW = (args[3] ?? 0) > 0 ? args[3] : WIDTH;
-        let w = 0, h = f ? Math.max(8, f.lineHeight) : 8, line = 0;
-        if (f) {
+        let w = 0, h = fnt ? Math.max(8, fnt.lineHeight) : 8, line = 0;
+        if (fnt) {
           for (const ch of t) {
-            if (ch === '\n') { w = Math.max(w, line); line = 0; h += Math.max(8, f.lineHeight); continue; }
-            const g = f.chars[ch.charCodeAt(0)];
+            if (ch === '\n') { w = Math.max(w, line); line = 0; h += Math.max(8, fnt.lineHeight); continue; }
+            const g = fnt.chars[ch.charCodeAt(0)];
             if (!g) continue;
-            if (line + g.width > maxW) { w = Math.max(w, line); line = 0; h += Math.max(8, f.lineHeight); }
+            if (line + g.width > maxW) { w = Math.max(w, line); line = 0; h += Math.max(8, fnt.lineHeight); }
             line += g.width;
           }
           w = Math.max(w, line);
@@ -1364,7 +1370,7 @@ export class PMachine {
       }
 
       // --- things that only need to not fail -----------------------------
-      case 'Display': return this.display(args);
+      case 'Display': return this.display(args, f?.scriptNo);
       case 'GetFarText': {
         // GetFarText(resource, line, buffer) fills the buffer and returns
         // it, so the caller can go on using the address it passed in.
@@ -1377,20 +1383,20 @@ export class PMachine {
         // Format(dest, source, ...) writes into dest and returns it; the
         // source may be a string or a (resource, line) pair.
         let i = 1, src: string;
-        if (this.strings.has(a1) || isRef(a1)) { src = this.stringAt(a1); i = 2; }
+        if (this.strings.has(a1) || isRef(a1)) { src = this.stringAt(a1, f?.scriptNo); i = 2; }
         else { src = this.textLines(a1)[args[2] ?? 0] ?? ''; i = 3; }
-        const out = this.format(src, args.slice(i));
+        const out = this.format(src, args.slice(i), f?.scriptNo);
         if (this.strings.has(a0)) { this.strings.set(a0, out); return a0; }
         return this.makeString(out);
       }
-      case 'StrLen': return this.stringAt(a0).length;
+      case 'StrLen': return this.stringAt(a0, f?.scriptNo).length;
       case 'StrCpy': return a0;
       case 'StrCmp': {
-        const x = this.stringAt(a0), y = this.stringAt(a1);
+        const x = this.stringAt(a0, f?.scriptNo), y = this.stringAt(a1, f?.scriptNo);
         return x < y ? -1 : x > y ? 1 : 0;
       }
       case 'StrAt': {
-        const t = this.stringAt(a0);
+        const t = this.stringAt(a0, f?.scriptNo);
         return t.charCodeAt(a1) || 0;
       }
 
@@ -1449,7 +1455,7 @@ export class PMachine {
         const w = Math.max(0, this.prop(o, 'nsRight') - this.prop(o, 'nsLeft'));
         const type = this.prop(o, 'type');
         const state = this.prop(o, 'state');
-        const text = this.stringAt(this.prop(o, 'text'));
+        const text = this.stringAt(this.prop(o, 'text'), o.scriptNo);
         const font = this.font(this.prop(o, 'font')) ?? this.font(0);
         const selected = (state & 1) !== 0;
         if (type === 0 || type === 1) {
@@ -1846,10 +1852,10 @@ export class PMachine {
    * because guessing wrong reads the next code as a value and turns the
    * rest of the arguments into nonsense.
    */
-  private display(args: number[]): number {
+  private display(args: number[], fromScript = 0): number {
     let i = 0;
     let text: string;
-    if (this.strings.has(args[0]) || isRef(args[0])) { text = this.stringAt(args[0]); i = 1; }
+    if (this.strings.has(args[0]) || isRef(args[0])) { text = this.stringAt(args[0], fromScript); i = 1; }
     else { text = this.textLines(args[0])[args[1] ?? 0] ?? ''; i = 2; }
 
     let x = 0, y = 0, fg = 15, width = WIDTH, haveXY = false;
@@ -1899,7 +1905,7 @@ export class PMachine {
   }
 
   /** The printf subset the scripts use. */
-  private format(src: string, args: number[]): string {
+  private format(src: string, args: number[], fromScript = 0): string {
     let out = '', ai = 0;
     for (let i = 0; i < src.length; i++) {
       if (src[i] !== '%') { out += src[i]; continue; }
@@ -1908,7 +1914,7 @@ export class PMachine {
       const kind = src[j];
       const v = args[ai++];
       if (kind === 'd' || kind === 'u') out += String(v ?? 0);
-      else if (kind === 's') out += this.stringAt(v ?? 0);
+      else if (kind === 's') out += this.stringAt(v ?? 0, fromScript);
       else if (kind === 'c') out += String.fromCharCode(v ?? 32);
       else if (kind === 'x') out += (v ?? 0).toString(16);
       else if (kind === '%') { out += '%'; ai--; }
@@ -2029,10 +2035,22 @@ export class PMachine {
    * A tagged reference names its script; a bare offset is assumed to sit
    * in script 0, which is where the shared strings live.
    */
-  stringAt(ref: number): string {
+  /**
+   * The text a script is pointing at.
+   *
+   * A bare offset carries no script with it -- `lofsa` only tags a
+   * reference when the target is an object -- so the script it came
+   * from has to be supplied.  Assuming script 0 reads the same offset
+   * out of the wrong resource: `DEdit::setSize` measures the string "M"
+   * to size the parser's input box, and reading script 0 at that offset
+   * gave "0.001" instead, five characters wide, which the script then
+   * multiplied by the field's 45-character limit into a box 1252 pixels
+   * across.
+   */
+  stringAt(ref: number, fromScript = 0): string {
     const made = this.strings.get(ref);
     if (made !== undefined) return made;
-    const scriptNo = isRef(ref) ? refScript(ref) : 0;
+    const scriptNo = isRef(ref) ? refScript(ref) : fromScript;
     const off = isRef(ref) ? refOffset(ref) : ref;
     const sc = this.script(scriptNo);
     if (!sc || off <= 0 || off >= sc.data.length) return '';
