@@ -503,14 +503,35 @@ export class PMachine {
         }
 
         switch (ins.name) {
-          case 'bnot': this.acc = ~this.acc; break;
+          /**
+           * The bitwise operations are 16-bit, like the machine.
+           *
+           * `shr` is a logical shift, not an arithmetic one: `0x8000
+           * >> 3` is `0x1000` on SCI's word, and carrying the sign bit
+           * along instead makes it `0xfffff000`.  That is not a
+           * rounding error, it is every higher bit set.  Camelot keeps
+           * its story flags sixteen to a global and sets one with
+           * `flags |= (0x8000 >> n)`, so setting flag 13 set flags 0
+           * to 13 at a stroke -- among them "Arthur is wearing his
+           * armour", which is why he began the game in chain mail
+           * instead of the tunic he wakes up in.
+           */
+          case 'bnot': this.acc = s16(~this.acc & 0xFFFF); break;
           case 'add': this.acc = (st.pop() ?? 0) + this.acc; break;
           case 'sub': this.acc = (st.pop() ?? 0) - this.acc; break;
           case 'mul': this.acc = (st.pop() ?? 0) * this.acc; break;
           case 'div': { const d = this.acc; this.acc = d ? Math.trunc((st.pop() ?? 0) / d) : 0; break; }
           case 'mod': { const d = this.acc; this.acc = d ? (st.pop() ?? 0) % d : 0; break; }
-          case 'shr': this.acc = (st.pop() ?? 0) >> this.acc; break;
-          case 'shl': this.acc = (st.pop() ?? 0) << this.acc; break;
+          case 'shr': {
+            const v = (st.pop() ?? 0) & 0xFFFF, k = this.acc & 0xFFFF;
+            this.acc = s16(k >= 16 ? 0 : (v >>> k) & 0xFFFF);
+            break;
+          }
+          case 'shl': {
+            const v = (st.pop() ?? 0) & 0xFFFF, k = this.acc & 0xFFFF;
+            this.acc = s16(k >= 16 ? 0 : (v << k) & 0xFFFF);
+            break;
+          }
           case 'xor': this.acc = (st.pop() ?? 0) ^ this.acc; break;
           case 'and': this.acc = (st.pop() ?? 0) & this.acc; break;
           case 'or':  this.acc = (st.pop() ?? 0) | this.acc; break;
