@@ -1127,6 +1127,10 @@ export class PMachine {
     this.pendingPic = null;
     this.picNotValid = 0;
     this.screen.drawPic(p.pic, p.clear);
+    // The saved pixels those windows were holding belong to the picture
+    // that has just gone; putting them back later would paint the old
+    // room over the new one.
+    this.windows.clear();
     this.picBands = p.pic.priorityBands ?? this.picBands;
     this.currentPic = p.number;
   }
@@ -1421,7 +1425,61 @@ export class PMachine {
         if (args.length > 0) this.picNotValid = a0;
         return was;
       }
-      case 'Graph': return 0;
+      /**
+       * Drawing straight onto the planes.
+       *
+       * One kernel with many sub-functions, and the one place in SCI
+       * where a rectangle is given as (top, left, bottom, right): the
+       * documentation is explicit that the order is the opposite of
+       * every other kernel.  Everything is relative to the current
+       * port.
+       *
+       * Camelot's windows draw themselves with this -- `bordWindow`
+       * fills its panel and then lays cels around the edge for the
+       * ornament -- so a stub returning 0 left every message in the
+       * game as text floating on the picture with nothing behind it.
+       */
+      case 'Graph': {
+        const p = this.port;
+        const y1 = p.y + s16(u16(a1)), x1 = p.x + s16(u16(args[2] ?? 0));
+        const y2 = p.y + s16(u16(args[3] ?? 0)), x2 = p.x + s16(u16(args[4] ?? 0));
+        switch (a0) {
+          case 2: return 16;                       // grGET_COLOURS
+          case 4: {                                // grDRAW_LINE
+            const colour = args[5] ?? 0;
+            this.screen.line(x1, y1, x2, y2, colour & 0x0F);
+            return 0;
+          }
+          case 7: {                                // grSAVE_BOX
+            const h = this.alloc();
+            this.savedBits.set(h, this.screen.save(x1, y1, x2 + 1, y2 + 1));
+            return h;
+          }
+          case 8: {                                // grRESTORE_BOX
+            const kept = this.savedBits.get(a1);
+            if (kept) { this.screen.restoreRect(kept); this.savedBits.delete(a1); }
+            return 0;
+          }
+          case 9: case 10: {                       // fill with the port's colours
+            const colour = a0 === 9 ? (p.back ?? 15) : (p.pen ?? 0);
+            this.screen.fill(x1, y1, x2 + 1, y2 + 1, colour & 0x0F);
+            return 0;
+          }
+          case 11: {                               // grFILL_BOX
+            const screens = args[5] ?? 1;
+            const vis = s16(u16(args[6] ?? 0));
+            const pri = s16(u16(args[7] ?? -1));
+            const ctl = s16(u16(args[8] ?? -1));
+            this.screen.fillPlanes(x1, y1, x2 + 1, y2 + 1, screens, vis, pri, ctl);
+            return 0;
+          }
+          // Updating and redrawing are what a port with its own buffer
+          // needs; everything here is already on the one screen.
+          case 12: case 13: return 0;
+          case 14: return 0;                       // grADJUST_PRIORITY
+          default: return 0;
+        }
+      }
       case 'GetPort': case 'SetPort': return 0;
 
       // --- placement and movement --------------------------------------
@@ -2255,9 +2313,14 @@ export class PMachine {
     const px = p.x + x, py = p.y + y;
 
     // Measure before drawing: the area is needed for the background,
-    // for saving under, and for putting the picture back later.
-    const height = this.textHeight(font, text, w);
-    const rect = { x0: px, y0: py, x1: Math.min(WIDTH, px + w), y1: Math.min(HEIGHT, py + height) };
+    // for saving under, and for putting the picture back later.  The
+    // box is what the text actually fills, not the width it was allowed
+    // -- a background painted out to the edge of the port put a black
+    // band across the border of Camelot's title screen, where the
+    // copyright line is only as wide as the words in it.
+    const box = this.textExtent(font, text, w);
+    const rect = { x0: px, y0: py,
+                   x1: Math.min(WIDTH, px + box.width), y1: Math.min(HEIGHT, py + box.height) };
     let handle = 0;
     if (save) {
       handle = this.alloc();
@@ -2278,19 +2341,20 @@ export class PMachine {
   /** Pixels a script asked to be saved, by handle. */
   private savedBits = new Map<number, { x0: number; y0: number; w: number; h: number; buf: Uint8Array }>();
 
-  /** How tall `text` comes out when wrapped to `width`. */
-  private textHeight(font: Font, text: string, width: number): number {
+  /** How much room `text` takes when wrapped to `width`. */
+  private textExtent(font: Font, text: string, width: number): { width: number; height: number } {
     const lineHeight = Math.max(8, font.lineHeight);
-    let lines = 0;
+    let lines = 0, widest = 0;
+    const done = (line: string) => { widest = Math.max(widest, this.measure(font, line)); lines++; };
     for (const para of text.split('\n')) {
       let line = '';
       for (const word of para.split(' ')) {
         const next = line ? `${line} ${word}` : word;
-        if (line && this.measure(font, next) > width) { lines++; line = word; } else line = next;
+        if (line && this.measure(font, next) > width) { done(line); line = word; } else line = next;
       }
-      lines++;
+      done(line);
     }
-    return lines * lineHeight;
+    return { width: Math.min(width, widest), height: lines * lineHeight };
   }
 
   private measure(font: Font, s: string): number {

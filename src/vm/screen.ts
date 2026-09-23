@@ -152,7 +152,13 @@ export class Screen {
   get displayHeight() { return HEIGHT + (this.statusVisible ? STATUS_HEIGHT : 0); }
 
   drawPic(pic: Picture, clear = true) {
+    // A new picture is a new room: nothing held over from the old one
+    // has any business keeping the picture off the screen.  A window a
+    // script forgot to dispose would otherwise protect its own stale
+    // pixels for the rest of the game -- which is how the intro's
+    // narration stayed sitting over Camelot's first room.
     this.overlays.length = 0;
+    this.windows.length = 0;
     this.maskStale = true;
     if (clear) { this.bgVisual.fill(0xFF); this.bgPriority.fill(0); this.control.fill(0); }
     this.bgVisual.set(pic.visual);
@@ -260,6 +266,41 @@ export class Screen {
     for (let y = Math.max(0, y0); y < Math.min(HEIGHT, y1); y++)
       for (let x = Math.max(0, x0); x < Math.min(WIDTH, x1); x++)
         this.visual[y * WIDTH + x] = (colour << 4) | colour;
+    this.dirty = true;
+  }
+
+  /** A line on the visual plane, for `Graph`'s grDRAW_LINE. */
+  line(x0: number, y0: number, x1: number, y1: number, colour: number) {
+    const dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
+    const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+    let err = dx - dy, x = x0, y = y0;
+    for (let guard = 0; guard < WIDTH + HEIGHT; guard++) {
+      this.px(x, y, colour);
+      if (x === x1 && y === y1) break;
+      const e2 = err * 2;
+      if (e2 > -dy) { err -= dy; x += sx; }
+      if (e2 < dx) { err += dx; y += sy; }
+    }
+    this.dirty = true;
+  }
+
+  /**
+   * Fill a rectangle on whichever planes are named.
+   *
+   * `Graph`'s grFILL_BOX writes to the visual, priority and control
+   * planes independently, which is how a window makes room for itself
+   * without disturbing what the picture says about depth.
+   */
+  fillPlanes(x0: number, y0: number, x1: number, y1: number,
+             screens: number, visual: number, priority: number, control: number) {
+    for (let y = Math.max(0, y0); y < Math.min(HEIGHT, y1); y++) {
+      const row = y * WIDTH;
+      for (let x = Math.max(0, x0); x < Math.min(WIDTH, x1); x++) {
+        if ((screens & 1) && visual >= 0) this.visual[row + x] = ((visual & 0x0F) << 4) | (visual & 0x0F);
+        if ((screens & 2) && priority >= 0) this.priority[row + x] = priority & 0x0F;
+        if ((screens & 4) && control >= 0) this.control[row + x] = control & 0x0F;
+      }
+    }
     this.dirty = true;
   }
 
