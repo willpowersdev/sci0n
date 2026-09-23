@@ -1564,12 +1564,38 @@ export class PMachine {
             this.screen.line(x1, y1, x2, y2, args[5] ?? 0);
             return 0;
           }
+          /**
+           * grSAVE_BOX, which is a script saying "I am about to cover
+           * this, and I will put it back myself".
+           *
+           * So for as long as the box is held, something the script
+           * drew is standing there and the cast must not paint over it.
+           * Camelot's message panel is built exactly this way: the box
+           * is saved, a grey panel and its border are drawn into it
+           * with `Graph`, and a transparent window is opened over the
+           * middle of it only to have a port to write the text in.
+           * Protecting the window alone left the panel's border
+           * unguarded -- 99,117-221,153 painted, 108,124-213,147
+           * protected -- and Arthur walked through the ornament around
+           * the edge of his own dialogue.
+           */
           case 7: {                                // grSAVE_BOX
             const h = this.alloc();
             this.savedBits.set(h, this.screen.save(x1, y1, x2 + 1, y2 + 1));
+            const area = { x0: x1, y0: y1, x1: x2 + 1, y1: y2 + 1 };
+            this.savedAreas.set(h, area);
+            this.screen.windows.push(area);
+            this.screen.protectionChanged();
             return h;
           }
           case 8: {                                // grRESTORE_BOX
+            const area = this.savedAreas.get(a1);
+            if (area) {
+              const at = this.screen.windows.indexOf(area);
+              if (at >= 0) this.screen.windows.splice(at, 1);
+              this.savedAreas.delete(a1);
+              this.screen.protectionChanged();
+            }
             const kept = this.savedBits.get(a1);
             if (kept) { this.screen.restoreRect(kept); this.savedBits.delete(a1); }
             return 0;
@@ -2675,6 +2701,14 @@ export class PMachine {
 
   /** Pixels a script asked to be saved, by handle. */
   private savedBits = new Map<number, { x0: number; y0: number; w: number; h: number; buf: Uint8Array }>();
+  /**
+   * Where each saved box is, so the cast can be kept off it.
+   *
+   * Held by identity rather than by value: the same rectangle is the
+   * entry in the screen's protected list, so removing it on restore is
+   * a lookup rather than a search for something that compares equal.
+   */
+  private savedAreas = new Map<number, { x0: number; y0: number; x1: number; y1: number }>();
 
   /** How much room `text` takes when wrapped to `width`. */
   private textExtent(font: Font, text: string, width: number): { width: number; height: number } {
