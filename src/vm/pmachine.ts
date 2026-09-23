@@ -1016,7 +1016,9 @@ export class PMachine {
    */
   private drawCast(castH: number) {
     this.screen.restore();
-    const drawn: Array<{ o: RtObject; cel: Cel; left: number; top: number; pri: number }> = [];
+    const drawn: Array<{ o: RtObject; cel: Cel; left: number; top: number;
+                        pri: number; y: number; z: number; order: number }> = [];
+    let order = 0;
     for (const v of this.listValues(castH)) {
       const o = this.resolveTarget(null, v);
       if (!o) continue;
@@ -1036,10 +1038,25 @@ export class PMachine {
         pri = this.priorityOf(s16(u16(this.prop(o, 'y'))));
         this.setProp(o, 'priority', pri);
       } else if (pri < 0 || pri > 15) pri = this.priorityOf(r.bottom - 1);
-      drawn.push({ o, cel, left: r.left, top: r.top, pri });
+      drawn.push({ o, cel, left: r.left, top: r.top, pri,
+                   y: s16(u16(this.prop(o, 'y'))), z: s16(u16(this.prop(o, 'z'))),
+                   order: order++ });
     }
-    drawn.sort((a, b) => a.pri - b.pri);
-    for (const d of drawn) this.screen.drawCel(d.cel, d.left, d.top, d.pri);
+    /**
+     * Nearer the bottom of the screen is nearer the viewer, so that --
+     * not priority -- is the order cast members are drawn in.
+     *
+     * Sorting by priority instead put anything sharing the ego's band
+     * in front of it whenever it happened to come later in the cast:
+     * Camelot's armour stand sits at y 108 and the ego walks to 110, so
+     * the ego is in front of it, but both land in band 7 and the stand
+     * was drawn last.  Ties fall back to z, then to the order the game
+     * gave them, so two things at the same depth keep their arrangement.
+     */
+    drawn.sort((a, b) => (a.y - b.y) || (a.z - b.z) || (a.order - b.order));
+    // Each cel writes its priority as well as testing against it, so a
+    // member drawn later cannot paint over one that is nearer the front.
+    for (const d of drawn) this.screen.drawCel(d.cel, d.left, d.top, d.pri, true);
     this.animateStats.drawn += drawn.length;
   }
 

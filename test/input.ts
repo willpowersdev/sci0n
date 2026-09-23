@@ -224,6 +224,82 @@ for (const name of ['SQ3', 'CAMELOT']) {
       `${wrong ? ` -- ${wrong} BEHAVED THE WRONG WAY` : ''}` +
       `${!egoIgnores && !blockers ? ' -- NOTHING BLOCKS THE EGO' : ''}`);
   }
+
+  /**
+   * When two sprites overlap, which one is in front?
+   *
+   * Cast members are drawn back to front by y, and each writes its
+   * priority as it goes, so whichever is nearer the bottom of the
+   * screen wins the pixels they share.  Sorting by priority instead put
+   * anything in the ego's band in front of it whenever it came later in
+   * the cast: Camelot's armour stand sits at y 108 and the ego walks to
+   * 110, and the stand was drawn over it.
+   *
+   * This gets a session of its own.  Putting the ego on each member in
+   * turn walks it through doorways -- by the third the room has changed
+   * and the member is not in it -- so one member is tested, the biggest
+   * thing in the room, and the room is checked to be the same one.
+   */
+  {
+    const w = warmed(name);
+    const vm = w.s.vm;
+    const ego = vm.resolveTarget(null, vm.globals[0]);
+    const pic = w.s.tick().picture;
+    // The biggest solid thing in the room.  A member carrying the
+    // "ignore actors" bit is usually a doorway drawn flat against the
+    // wall, which the ego barely overlaps however it stands.
+    let target: ReturnType<typeof vm.resolveTarget> = null, area = 0;
+    for (const v of (vm as any).listValues(lastCast)) {
+      const m = vm.resolveTarget(null, v);
+      if (!m || m === ego) continue;
+      if (vm.prop(m, 'signal') & 0xFFFF & SIGNAL_NO_BLOCK) continue;
+      const c = (vm as any).celOf(m);
+      if (c && c.width * c.height > area) { area = c.width * c.height; target = m; }
+    }
+    if (ego && target) {
+      /** Hold the ego still: the game animates on its own cycle. */
+      const place = (ex: number, ey: number) => {
+        for (let k = 0; k < 12; k++) {
+          vm.setProp(ego, 'x', ex); vm.setProp(ego, 'y', ey);
+          vm.setProp(ego, 'mover', 0);
+          w.step();
+        }
+      };
+      /** The share of the shared pixels the ego ended up owning. */
+      const share = () => {
+        const ec = (vm as any).celOf(ego), mc = (vm as any).celOf(target);
+        if (!ec || !mc) return null;
+        const er = (vm as any).celRect(ec, vm.prop(ego, 'x'), vm.prop(ego, 'y'), vm.prop(ego, 'z'));
+        const mr = (vm as any).celRect(mc, vm.prop(target!, 'x'), vm.prop(target!, 'y'), vm.prop(target!, 'z'));
+        let both = 0, mine = 0;
+        for (let y = Math.max(er.top, mr.top); y < Math.min(er.bottom, mr.bottom); y++)
+          for (let x = Math.max(er.left, mr.left); x < Math.min(er.right, mr.right); x++) {
+            if (y < 0 || y >= HEIGHT || x < 0 || x >= WIDTH) continue;
+            const ev = ec.pixels[(y - er.top) * ec.width + (x - er.left)];
+            const mv = mc.pixels[(y - mr.top) * mc.width + (x - mr.left)];
+            if (ev === ec.key || mv === mc.key) continue;
+            both++;
+            if (w.s.screen.visual[y * WIDTH + x] === (ev < 16 ? (ev << 4) | ev : ev)) mine++;
+          }
+        return both < 20 ? null : mine / both;
+      };
+      const tx = vm.prop(target, 'x'), ty = vm.prop(target, 'y');
+      place(tx, ty + 4);
+      const front = w.s.tick().picture === pic ? share() : null;
+      place(tx, ty - 4);
+      const back = w.s.tick().picture === pic ? share() : null;
+      if (front === null || back === null) {
+        console.log(`  sprite order against ${target.def.name}: not enough overlap to judge`);
+      } else {
+        const ok = front > 0.9 && back < 0.5;
+        checked++;
+        if (!ok) failed++;
+        console.log(`  in front of ${target.def.name} the ego wins ` +
+          `${(front * 100).toFixed(0)}% of the pixels they share, behind it ` +
+          `${(back * 100).toFixed(0)}%${ok ? '' : ' -- DRAWN IN THE WRONG ORDER'}`);
+      }
+    }
+  }
 }
 console.log(`\n${checked - failed}/${checked} checks passed`);
 process.exit(failed ? 1 : 0);

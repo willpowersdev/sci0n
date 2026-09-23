@@ -58,8 +58,15 @@ export class Screen {
     this.dirty = true;
   }
 
-  drawCel(cel: Cel, left: number, top: number, priority: number) {
-    this.blit(this.visual, this.priority, cel, left, top, priority, false);
+  /**
+   * Draw a cel over the picture.
+   *
+   * `writePriority` records the cel's own priority in the plane as it
+   * goes, which is what keeps two sprites in the right order where they
+   * overlap: without it, whichever is drawn second wins every pixel.
+   */
+  drawCel(cel: Cel, left: number, top: number, priority: number, writePriority = false) {
+    this.blit(this.visual, this.priority, cel, left, top, priority, writePriority);
     this.dirty = true;
   }
 
