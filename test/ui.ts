@@ -88,7 +88,9 @@ g.document = {
   title: '',
   body: new El('body'),
 };
-g.requestAnimationFrame = () => 1;
+/** The page's frame callback, so the loop can be stepped by hand. */
+let frameFn: Function | null = null;
+g.requestAnimationFrame = (fn: Function) => { frameFn = fn; return 1; };
 g.cancelAnimationFrame = () => {};
 g.Option = class { text: string; value: string;
   constructor(t: string, v: string) { this.text = t; this.value = v; } };
@@ -243,6 +245,23 @@ for (const t of tabs()) {
     fireWindow('pointerup', { target: speed });
     await sleep(5);
     check('a click on the dropdown leaves it holding the keyboard', focused === speed);
+
+    /**
+     * A game that ends itself hands the page back.
+     *
+     * File > Quit, once its prompt is answered, returns from the
+     * game's own play loop, and the interpreter reports that as `ret`
+     * (test/menubar.ts drives the whole chain).  The page used to do
+     * nothing with it: the frame loop simply stopped asking for
+     * frames, leaving play mode up over a picture that would never
+     * change again, with the play bar still showing and no way back
+     * except the keyboard shortcut.
+     */
+    const sess = (globalThis as any).__lastSession;
+    (sess as any).done = { stopped: 'ret' };
+    frameFn?.();
+    check('a game that quits itself leaves play mode, as Exit does',
+      (reg.get('quit') as El).hidden && (reg.get('speed') as El).hidden);
   }
 }
 

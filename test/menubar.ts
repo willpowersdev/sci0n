@@ -21,7 +21,7 @@ import { EV } from '../src/vm/pmachine.ts';
 import { WIDTH, HEIGHT } from '../src/vm/screen.ts';
 import { ROOT } from './games.ts';
 
-const ESC = 27, RIGHT = 0x4D00, DOWN = 0x5000;
+const ESC = 27, RIGHT = 0x4D00, DOWN = 0x5000, ENTER = 0x0D;
 
 function nodeSource(dir: string): ResourceSource {
   const files = readdirSync(dir);
@@ -96,6 +96,57 @@ const restored = vm.menu.openMenu < 0 && diff === 0;
 if (!restored) failed++;
 console.log(`  escape closes it and puts back the picture` +
   `${restored ? '' : ` -- ${diff} PIXELS LEFT CHANGED`}`);
+
+/**
+ * File > Quit ends the game.
+ *
+ * The chain is longer than it looks: the menus have to open, the
+ * arrows have to skip the separator to reach Quit, the selection has
+ * to reach the script, the script's confirmation prompt has to come up
+ * and take an answer, and only then does the game's own play loop
+ * return.  That return is what the interpreter reports as `ret`, and
+ * it is the same ending as pressing Exit -- the browser hands the page
+ * back on it (see test/ui.ts).
+ *
+ * Anything broken along the way leaves the session merrily running,
+ * which is exactly what it did: the menu closed and nothing happened.
+ */
+{
+  const ITEM = 'Quit';
+  s.key(ESC);
+  for (let i = 0; i < 60 && st.running; i++) st = step();
+  s.key(RIGHT);                                   // on to File
+  for (let i = 0; i < 20 && st.running; i++) st = step();
+  const items = () => vm.menu.menus[vm.menu.openMenu]?.items ?? [];
+  let reached = false;
+  for (let k = 0; k < 8 && !reached; k++) {
+    if (items()[vm.menu.openItem]?.text === ITEM) { reached = true; break; }
+    s.key(DOWN);
+    for (let i = 0; i < 20 && st.running; i++) st = step();
+  }
+  checked++;
+  if (!reached) failed++;
+  console.log(`  the arrows reach ${reached ? `"${ITEM}"` : `ITEM ${vm.menu.openItem}, NOT "${ITEM}"`}` +
+    ' in the File menu');
+
+  // Choose it, which puts up the game's own confirmation.
+  s.key(ENTER);
+  for (let i = 0; i < 400 && st.running; i++) st = step();
+  checked++;
+  // Still running, because the prompt has not been answered yet -- if
+  // the game quit here it would be quitting without asking.
+  const asked = st.running;
+  if (!asked) failed++;
+  console.log(`  choosing it ${asked ? 'puts up a prompt and waits' : 'QUIT WITHOUT ASKING'}`);
+
+  s.key(ENTER);
+  for (let i = 0; i < 600 && st.running; i++) st = step();
+  checked++;
+  const quit = !st.running && st.stopped === 'ret';
+  if (!quit) failed++;
+  console.log(`  answering it ${quit ? 'ends the game the way Exit does' : ''}` +
+    `${quit ? '' : st.running ? '-- THE GAME KEPT RUNNING' : `-- STOPPED WITH "${st.stopped}", NOT "ret"`}`);
+}
 
 console.log(`\n${checked - failed}/${checked} menu-bar checks passed`);
 process.exit(failed ? 1 : 0);

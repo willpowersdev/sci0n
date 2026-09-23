@@ -458,7 +458,22 @@ function startPlay() {
                     '  ·  esc for the menu bar  ·  shift-esc to leave  ·  fn fn to dictate'
                   : `  ·  stopped: ${st.stopped ?? ''}`);
     if (session.vm.sounds.available) pumpAudio(session);
-    if (st.running) raf = requestAnimationFrame(frame);
+    if (st.running) { raf = requestAnimationFrame(frame); return; }
+    raf = 0;
+    /**
+     * The game ended itself.
+     *
+     * `ret` means its own play loop returned, which is what File >
+     * Quit does once its prompt is answered, and what the death screen
+     * does when the player declines to carry on.  That is the same
+     * ending as pressing Exit, so it leaves the same way -- otherwise
+     * the page sat frozen on the last frame in play mode, with no way
+     * back to the browser except the keyboard shortcut.
+     *
+     * A stop for any other reason is a fault, and the last frame and
+     * the reason in the bar are the evidence for it; those stay put.
+     */
+    if (st.stopped === 'ret') stopPlay();
   };
   raf = requestAnimationFrame(frame);
 }
