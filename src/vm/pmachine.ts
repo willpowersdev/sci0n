@@ -27,6 +27,7 @@ import { Screen, WIDTH, HEIGHT } from './screen.ts';
 import { SoundBox, SIGNAL_FINISHED } from './sounds.ts';
 import { MenuBar, SM } from './menu.ts';
 import { Parser } from './parser.ts';
+import { unditherCel } from '../undither.ts';
 
 /**
  * Debug sampler.  A blocked synchronous loop never reaches a timer or
@@ -257,7 +258,6 @@ export class PMachine {
       if (obj) this.setProp(obj, 'signal', SIGNAL_FINISHED);
     }
   }
-  private views = new Map<number, View | null>();
   private fonts = new Map<number, Font | null>();
   private selCache = new Map<string, number>();
   /** Strings the kernel made, which scripts hold by handle. */
@@ -2261,17 +2261,55 @@ export class PMachine {
     }
   }
 
-  private views = new Map<number, View | null>();
+  /**
+   * Decoded views, with each cel's pixels as the resource had them.
+   *
+   * The pristine copy is what makes merging reversible: `unditherCel`
+   * rewrites a cel in place, and the merges depend on both the setting
+   * and the room, either of which can change under a view that is
+   * already loaded.
+   */
+  private views = new Map<number, { view: View | null; plain: Uint8Array[]; stamp: number }>();
 
-  /** Decoded view resource, cached; null when absent or malformed. */
+  /**
+   * Decoded view resource, cached; null when absent or malformed.
+   *
+   * A cel arrives as 4-bit colour indices, and where the artist drew a
+   * chequerboard to fake a colour the EGA did not have, that is what a
+   * modern display shows.  The picture behind it is already blended --
+   * its plane stores the pair per pixel, so `rgb` just mixes them -- so
+   * leaving cels alone put dithered sprites in front of smooth
+   * backgrounds.  Merging a cel's pairs the same way needs the pattern
+   * found first, and then cross-checked against the background: a
+   * combination is merged only if the picture dithered with it too,
+   * which is what keeps deliberate chequerboard texture intact.
+   *
+   * A merged pixel holds a pair byte rather than an index, which `blit`
+   * already passes through untouched.
+   */
   private view(n: number): View | null {
-    if (!this.views.has(n)) {
+    let e = this.views.get(n);
+    if (!e) {
       const d = n >= 0 ? this.game.tryData('view', n) : null;
       let v: View | null = null;
       if (d) { try { v = new View(d); } catch { v = null; } }
-      this.views.set(n, v);
+      const plain = v ? v.loops.flat().map(c => c.pixels.slice()) : [];
+      e = { view: v, plain, stamp: -1 };
+      this.views.set(n, e);
     }
-    return this.views.get(n) ?? null;
+    // Which background the merges were decided against, or 0 for a view
+    // left as the artist drew it.
+    const want = this.screen.undither ? this.screen.picEpoch + 1 : 0;
+    if (e.view && e.stamp !== want) {
+      const cels = e.view.loops.flat();
+      cels.forEach((c, i) => c.pixels.set(e!.plain[i]));
+      if (this.screen.undither) {
+        const hist = this.screen.backgroundHistogram();
+        for (const c of cels) unditherCel(c, hist);
+      }
+      e.stamp = want;
+    }
+    return e?.view ?? null;
   }
 
   /** Read a named property off an object handle, or -1. */

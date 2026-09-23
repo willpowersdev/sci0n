@@ -15,6 +15,7 @@ import { Picture, WIDTH, HEIGHT } from '../pic.ts';
 import type { Cel } from '../view.ts';
 import type { Font } from '../font.ts';
 import { EGA_RGB, BLENDED_RGB, ditherPixel } from '../ega.ts';
+import { histogram } from '../undither.ts';
 
 export { WIDTH, HEIGHT };
 /** The status line sits above the picture; SCI0 reserves ten rows. */
@@ -139,6 +140,16 @@ export class Screen {
   undither = true;
 
   /**
+   * Bumped whenever the background changes.
+   *
+   * Merging a cel's dither pairs is decided against the background it
+   * will be drawn over -- a combination is only merged if the picture
+   * used it as a dither too -- so a new room means the question has to
+   * be asked again.  See `histogram`.
+   */
+  picEpoch = 0;
+
+  /**
    * Whether the strip above the picture is shown.
    *
    * SCI keeps the status line and the menu bar off screen until they
@@ -151,7 +162,21 @@ export class Screen {
   /** Rows the display occupies, which the strip changes. */
   get displayHeight() { return HEIGHT + (this.statusVisible ? STATUS_HEIGHT : 0); }
 
+  /**
+   * The dither pairs the background uses, cached per picture.
+   *
+   * A cel's pairs are merged only where the picture merged the same
+   * ones, so this is the question every view load has to ask.
+   */
+  private hist: { epoch: number; counts: Int32Array } | null = null;
+  backgroundHistogram(): Int32Array {
+    if (this.hist?.epoch !== this.picEpoch)
+      this.hist = { epoch: this.picEpoch, counts: histogram(this.bgVisual) };
+    return this.hist.counts;
+  }
+
   drawPic(pic: Picture, clear = true) {
+    this.picEpoch++;
     // A new picture is a new room: nothing held over from the old one
     // has any business keeping the picture off the screen.  A window a
     // script forgot to dispose would otherwise protect its own stale

@@ -22,12 +22,23 @@ import type { Picture } from './pic.ts';
 export const CEL_THRESHOLD = 5;    // occurrences within this cel
 export const PIC_THRESHOLD = 200;  // occurrences of the same pair in the background
 
-/** How often each dither pair appears in a pic's visual plane. */
-export function picHistogram(picture: Picture): Int32Array {
+/**
+ * How often each dither pair appears in a plane of pair bytes.
+ *
+ * Taken over a visual plane rather than a `Picture` so the live screen
+ * can ask about the background it is actually showing, which by then
+ * may have had cels baked into it by AddToPic.
+ */
+export function histogram(visual: Uint8Array): Int32Array {
   const hist = new Int32Array(256);
-  for (const pal of picture.visual)
+  for (const pal of visual)
     if ((pal >> 4) !== (pal & 0x0F)) hist[pal]++;
   return hist;
+}
+
+/** How often each dither pair appears in a pic's visual plane. */
+export function picHistogram(picture: Picture): Int32Array {
+  return histogram(picture.visual);
 }
 
 /**
