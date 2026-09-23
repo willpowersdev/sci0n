@@ -133,5 +133,72 @@ for (let i = 0; i < 12_000 && st.running; i++) { if (i % 120 === 0) s.key(ENTER)
   }
 }
 
+/**
+ * The edge of the picture is not a wall.
+ *
+ * `CanBeHere` used to refuse any base reaching past the picture, which
+ * sounds like common sense and is not what the original does: it asks
+ * the control plane and the other actors, and nothing else.  Keeping an
+ * actor on screen is the control plane's job, and a room that wants a
+ * way out simply leaves its edge unpainted.
+ *
+ * Merlin's room is one.  `Rm2::doit` watches for the ego's y passing
+ * 188 and sends it back to the map, and the ego steps two rows at a
+ * time from an even start -- so with that check in place the highest it
+ * could reach was 188 exactly.  One short, in a room with no other way
+ * out: you could walk in and never leave.
+ *
+ * Both halves are checked, because removing a bound is only right if
+ * the rooms that meant to stop you still do.  Merlin's floor has to let
+ * the ego past the line his room watches for, and Arthur's chamber --
+ * which paints its edges -- still has to hold him in.
+ */
+{
+  console.log('\n=== the picture\'s edge ===');
+  const vm2 = s.vm as any;
+  const canBeHere = idx.kernel.indexOf('CanBeHere');
+  const baseSetter = idx.kernel.indexOf('BaseSetter');
+  let ego: any = null;
+  for (const v of vm2.listValues(vm2.cast)) {
+    const o = vm2.resolveTarget(null, v);
+    if (o?.name === 'ego') { ego = o; break; }
+  }
+
+  /** May the ego stand here, with this room's control plane on screen? */
+  const standable = (pic: number, x: number, y: number) => {
+    s.screen.drawPic(new Picture(g.data(1, pic)));
+    vm2.setProp(ego, 'x', x); vm2.setProp(ego, 'y', y);
+    vm2.kernel(baseSetter, [ego.handle || 0], null);
+    return !!vm2.kernel(canBeHere, [ego.handle || 0], null);
+  };
+
+  if (!ego) {
+    failed++; checked++;
+    console.log('  FAIL there is no ego to place');
+  } else {
+    // Merlin's room: the way out is off the bottom, past y = 188.
+    checked++;
+    const canLeave = standable(2, 160, 190);
+    if (!canLeave) failed++;
+    console.log(`  ${canLeave ? 'ok  ' : 'FAIL'} Merlin's floor lets the ego past y=188` +
+      `${canLeave ? '' : ' -- HIS ROOM HAS NO EXIT'}`);
+
+    /**
+     * And the rooms that meant to stop you still do.
+     *
+     * Arthur's chamber has no `doit` and no way out at the bottom, so
+     * it paints a line of blocking control along its last row instead.
+     * Stepping onto y=190 puts the ego's base across that row, which is
+     * what has to refuse -- the check being removed was never what held
+     * him in, it only looked like it.
+     */
+    checked++;
+    const held = !standable(4, 160, 190);
+    if (!held) failed++;
+    console.log(`  ${held ? 'ok  ' : 'FAIL'} Arthur's chamber still stops him on its painted edge` +
+      `${held ? '' : ' -- HE WALKS OUT OF THE PICTURE'}`);
+  }
+}
+
 console.log(`\n${checked - failed}/${checked} control checks passed`);
 process.exit(failed ? 1 : 0);

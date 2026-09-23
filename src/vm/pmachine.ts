@@ -2305,7 +2305,23 @@ export class PMachine {
         const top = s16(u16(this.prop(o, 'brTop')));
         const bottom = s16(u16(this.prop(o, 'brBottom')));
         if (right <= left || bottom <= top) return 1;    // no base yet
-        if (left < 0 || right > WIDTH || top < 0 || bottom > HEIGHT) return 0;
+        /**
+         * The edge of the picture is not a wall.
+         *
+         * This used to refuse any base that reached past the picture,
+         * which sounds like common sense and is not what the original
+         * does: it asks the control plane and the other actors, and
+         * nothing else.  Keeping an actor on screen is the control
+         * plane's job, and a room that wants a way out simply leaves
+         * its edge unpainted.
+         *
+         * Merlin's room is one.  It is left by walking off the bottom
+         * -- `Rm2::doit` watches for the ego's y passing 188 and sends
+         * it back to the map -- and the ego steps two rows at a time
+         * from an even start, so the highest it could ever reach with
+         * that check in place was 188 exactly.  One short, in a room
+         * with no other exit.
+         */
         // `Act::canBeHere` hands over the cast so that actors can stand
         // in each other's way.
         if (this.blockedByCast(o, left, top, right, bottom, a1 || this.cast)) return 0;
