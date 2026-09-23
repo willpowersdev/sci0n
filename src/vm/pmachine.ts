@@ -1414,8 +1414,14 @@ export class PMachine {
       case 'DrawCel': {
         // DrawCel(view, loop, cel, x, y, priority)
         const v = this.view(a0);
-        const cels = v?.loops[a1];
-        const cel = cels?.[args[2] ?? 0];
+        if (!v || !v.loopCount) return 0;
+        // The loop and cel are clamped, as SCI clamps them.  Camelot
+        // asks for cel 2 of a loop with two cels when it draws the
+        // bottom right corner of a message panel; refusing to draw
+        // simply leaves that corner off.
+        const loop = v.loops[Math.max(0, Math.min(v.loopCount - 1, a1))];
+        if (!loop || !loop.length) return 0;
+        const cel = loop[Math.max(0, Math.min(loop.length - 1, args[2] ?? 0))];
         if (!cel) return 0;
         // A priority of -1 means none was given: the cel is drawn
         // whatever the picture says.  Taking it as the lowest priority
@@ -1665,28 +1671,20 @@ export class PMachine {
        */
       case 'TextSize': {
         // Named `fnt`, not `f`: the frame is also called `f` here, and
-        // shadowing it sent `stringAt` looking in script 0.  It then
-        // measured whatever sat at that offset in the wrong resource --
-        // "0.001" where the caller meant "M" -- and `DEdit::setSize`
-        // multiplied the five characters by its 45-character limit into
-        // an input box 1252 pixels wide.
+        // shadowing it sent `stringAt` looking in script 0.
         const fnt = this.font(args[2] ?? 0) ?? this.font(0);
         const t = this.stringAt(a1, f?.scriptNo);
         const maxW = (args[3] ?? 0) > 0 ? args[3] : WIDTH;
-        let w = 0, h = fnt ? Math.max(8, fnt.lineHeight) : 8, line = 0;
-        if (fnt) {
-          for (const ch of t) {
-            if (ch === '\n') { w = Math.max(w, line); line = 0; h += Math.max(8, fnt.lineHeight); continue; }
-            const g = fnt.chars[ch.charCodeAt(0)];
-            if (!g) continue;
-            if (line + g.width > maxW) { w = Math.max(w, line); line = 0; h += Math.max(8, fnt.lineHeight); }
-            line += g.width;
-          }
-          w = Math.max(w, line);
-        }
-        this.writeWords(a0, [0, 0, h, w]);
+        // Measured exactly as it will be drawn.  This used to wrap on
+        // characters while the drawing wrapped on words, so a game sized
+        // a panel for five lines and then six were written into it --
+        // Camelot's message boxes had their last line sitting on the
+        // border.
+        const box = fnt ? this.textExtent(fnt, t, maxW) : { width: 0, height: 8 };
+        this.writeWords(a0, [0, 0, box.height, box.width]);
         return 0;
       }
+
 
       // --- things that only need to not fail -----------------------------
       case 'Display': return this.display(args, f?.scriptNo);
