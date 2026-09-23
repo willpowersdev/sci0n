@@ -1,5 +1,5 @@
 /**
- * Can you see what you are typing?
+ * The text around the picture: the status line and the parser's input.
  *
  * Typing a letter opens the parser's input line, and the game sizes that
  * window itself: `DEdit::setSize` measures the string "M" through
@@ -9,23 +9,76 @@
  * letter visible on screen.
  *
  * What is checked is what a player would notice: the window and the
- * field it contains are on the screen, and wide enough to type into.
+ * field it contains are on the screen, wide enough to type into, and
+ * that a typed phrase appears in them.  That last part is not the same
+ * question as whether the field holds the text -- it held "look" while
+ * the screen still showed "l", because editing the buffer and redrawing
+ * the field are two different things and only one of them was
+ * happening.
+ *
+ * The status line is checked here too.  It is the other half of the
+ * interface that is not the picture, and it was being kept as a string
+ * and never drawn -- a black band across the top of every game where
+ * the original shows the score.
+ *
+ * Only a game that asks for one is judged on it.  SQ3 draws a score
+ * line; Camelot puts a menu bar in the same strip and never calls
+ * `DrawStatus` at all, and menus are not implemented, so there is
+ * nothing there to be right or wrong about yet.
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Game, type ResourceSource } from '../src/resources.ts';
 import { Index } from '../src/script.ts';
 import { Session } from '../src/vm/session.ts';
-import { WIDTH } from '../src/vm/screen.ts';
+import { WIDTH, STATUS_HEIGHT } from '../src/vm/screen.ts';
 import { ROOT } from './games.ts';
 
-const ENTER = 0x0D, LETTER = 0x6C;        // 'l', as in "look"
+const ENTER = 0x0D;
+const PHRASE = 'look';
+/** Cycles to let the dialog notice each keystroke. */
+const SETTLE = 30;
 /** Narrower than this and there is no room to type. */
 const USABLE = 100;
 
 function nodeSource(dir: string): ResourceSource {
   const files = readdirSync(dir);
   return { names: () => files, read: (n) => new Uint8Array(readFileSync(join(dir, n))) };
+}
+
+/**
+ * Does `text` appear as pixels inside the given rectangle?
+ *
+ * The glyphs are rendered from the game's own font and matched against
+ * the screen, so this cannot be satisfied by the text merely existing
+ * somewhere in memory.
+ */
+function drawnText(s: Session, text: string, left: number, top: number,
+                   right: number, bottom: number): boolean {
+  const font = (s.vm as any).font(0);
+  if (!font) return false;
+  const glyphs = [...text].map(c => font.chars[c.charCodeAt(0)]).filter(Boolean);
+  if (!glyphs.length) return false;
+  const vis = s.screen.visual;
+  const y1 = Math.min(190, bottom), x1 = Math.min(WIDTH, right);
+  for (let y = Math.max(0, top); y < y1 - glyphs[0].height; y++) {
+    for (let x = Math.max(0, left); x < x1; x++) {
+      let cx = x, all = true;
+      for (const g of glyphs) {
+        for (let gy = 0; gy < g.height && all; gy++)
+          for (let gx = 0; gx < g.width && all; gx++) {
+            if (!g.bits[gy * g.width + gx]) continue;
+            const px = cx + gx, py = y + gy;
+            // The field is black on white, so a set bit must be dark.
+            if (px >= WIDTH || py >= 190 || (vis[py * WIDTH + px] & 0x0F) !== 0) all = false;
+          }
+        cx += g.width;
+        if (!all) break;
+      }
+      if (all) return true;
+    }
+  }
+  return false;
 }
 
 let failed = 0, checked = 0;
@@ -65,8 +118,10 @@ for (const name of ['SQ3', 'CAMELOT']) {
   // its own and the first one seen is not the parser's.
   win = null;
   fields.length = 0;
-  s.key(LETTER);
-  for (let i = 0; i < 60 && st.running; i++) st = step();
+  for (const ch of PHRASE) {
+    s.key(ch.charCodeAt(0));
+    for (let i = 0; i < SETTLE && st.running; i++) st = step();
+  }
 
   checked++;
   if (!win) { failed++; console.log(`${name.padEnd(9)} typing opened no window at all`); continue; }
@@ -92,6 +147,33 @@ for (const name of ['SQ3', 'CAMELOT']) {
   if (!ok) failed++;
   console.log(`          ${field.name} field ${field.left}-${field.right} (${fw}px)` +
     `${ok ? '' : ` -- ${fw > WIDTH ? 'WIDER THAN THE SCREEN' : 'TOO NARROW TO TYPE IN'}`}`);
+
+  /**
+   * Is the phrase on the screen?
+   *
+   * Rendering each letter through the same font and looking for it in
+   * the window's pixels is the only way to ask this that a buffer full
+   * of text cannot answer for the screen.
+   */
+  checked++;
+  const shown = drawnText(s, PHRASE, left, top, right, bottom);
+  if (!shown) failed++;
+  console.log(`          "${PHRASE}" ${shown ? 'is drawn in the window' : 'IS NOT ON THE SCREEN'}`);
+
+  // The status line: text the game set, and pixels to show for it.
+  const bar = s.screen.statusBar;
+  let dark = 0;
+  for (const v of bar) if ((v & 0x0F) === 0) dark++;
+  if (!s.screen.status.trim()) {
+    console.log(`          no status line asked for (this game uses a menu bar, which is not implemented)`);
+  } else {
+    checked++;
+    const lit = dark > 0 && dark < bar.length;
+    if (!lit) failed++;
+    console.log(`          status line ${JSON.stringify(s.screen.status.trim().slice(0, 40))}` +
+      ` · ${dark} of ${WIDTH * STATUS_HEIGHT} pixels inked` +
+      `${lit ? '' : ' -- NOTHING DRAWN IN THE STATUS LINE'}`);
+  }
 }
 console.log(`\n${checked - failed}/${checked} input-window checks passed`);
 process.exit(failed ? 1 : 0);

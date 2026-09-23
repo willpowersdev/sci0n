@@ -749,6 +749,40 @@ export class PMachine {
   }
 
   /**
+   * An edit field: what has been typed, and the caret.
+   *
+   * The caret goes where the cursor actually is rather than always at
+   * the end, so moving through the line with the arrow keys shows.
+   */
+  private drawEditField(o: RtObject, x: number, y: number, w: number, font: Font | null) {
+    if (!font) return;
+    const text = this.stringAt(this.prop(o, 'text'), o.scriptNo);
+    const h = Math.max(8, font.lineHeight);
+    // Clear first: the field is redrawn on every keystroke, and text
+    // left behind shows through wherever the new line is shorter.
+    if (w > 0) this.screen.fill(x, y, x + w, y + h, 15);
+    this.screen.text(font, text, x, y, 0);
+    const cur = Math.max(0, Math.min(text.length, this.prop(o, 'cursor', text.length)));
+    let cx = x;
+    for (let i = 0; i < cur; i++) cx += font.chars[text.charCodeAt(i)]?.width ?? 0;
+    this.screen.fill(cx, y, cx + 1, y + h, 0);
+  }
+
+  /**
+   * Draw a control where it sits, after something has changed it.
+   *
+   * A control's rectangle is relative to the window it belongs to, so
+   * the same offset the drawing path applies has to be applied here.
+   */
+  private redrawControl(o: RtObject) {
+    const p = this.port;
+    const x = p.x + this.prop(o, 'nsLeft');
+    const y = p.y + this.prop(o, 'nsTop');
+    const w = Math.max(0, this.prop(o, 'nsRight') - this.prop(o, 'nsLeft'));
+    this.drawEditField(o, x, y, w, this.font(this.prop(o, 'font')) ?? this.font(0));
+  }
+
+  /**
    * The strip of floor a cast member stands on.
    *
    * Worked out from where the member is now rather than read back from
@@ -1333,7 +1367,7 @@ export class PMachine {
 
       // --- text and windows ---------------------------------------------
       case 'DrawStatus': {
-        this.screen.status = this.stringAt(a0, f?.scriptNo);
+        this.screen.drawStatus(this.font(0), this.stringAt(a0, f?.scriptNo));
         return 0;
       }
       /**
@@ -1464,16 +1498,7 @@ export class PMachine {
           this.screen.frame(x - 1, y - 1, x + w + 3, bottom + 3, 0);
           if (font && text) this.screen.text(font, text, x + 1, y, selected ? 15 : 0);
         } else if (type === 3) {
-          // An edit field shows what has been typed, with the caret
-          // where the cursor actually is rather than always at the end.
-          if (font) {
-            this.screen.text(font, text, x, y, 0);
-            const cur = Math.max(0, Math.min(text.length, this.prop(o, 'cursor', text.length)));
-            let cx = x;
-            for (let i = 0; i < cur; i++)
-              cx += font.chars[text.charCodeAt(i)]?.width ?? 0;
-            this.screen.fill(cx, y, cx + 1, y + Math.max(8, font.lineHeight), 0);
-          }
+          this.drawEditField(o, x, y, w, font);
         } else if (font && text) {
           this.drawText(font, text, x, y, 0, Math.max(8, w || (WIDTH - x)));
         }
@@ -1522,6 +1547,12 @@ export class PMachine {
         this.strings.set(buf, text);
         this.setProp(ctl, 'cursor', cur);
         this.setProp(ev, 'claimed', 1);
+        // Redrawing is part of this kernel's job, not a later call's.
+        // Editing the buffer alone leaves the field showing whatever it
+        // showed when the dialog opened: the whole phrase is typed, the
+        // parser receives it, and the screen still shows the first
+        // letter, which looks exactly like typing doing nothing.
+        this.redrawControl(ctl);
         return 1;
       }
 
@@ -1905,20 +1936,48 @@ export class PMachine {
   }
 
   /** The printf subset the scripts use. */
+  /**
+   * The printf subset the scripts use.
+   *
+   * The width and alignment are not decoration: SQ3 lays its status
+   * line out by padding the score to a fixed width and right-aligning
+   * the title, so parsing the specifier and then ignoring it ran the
+   * two together as "Score: 0 of 738Space Quest III".
+   */
   private format(src: string, args: number[], fromScript = 0): string {
     let out = '', ai = 0;
     for (let i = 0; i < src.length; i++) {
       if (src[i] !== '%') { out += src[i]; continue; }
       let j = i + 1;
-      while (j < src.length && /[-0-9.]/.test(src[j])) j++;
+      let left = false;
+      // SCI writes `%-10s` for left-aligned and `%10s` for right.
+      while (j < src.length && (src[j] === '-' || src[j] === '+' || src[j] === ' ')) {
+        if (src[j] === '-') left = true;
+        j++;
+      }
+      let width = 0;
+      while (j < src.length && src[j] >= '0' && src[j] <= '9') width = width * 10 + (src.charCodeAt(j++) - 48);
+      let prec = -1;
+      if (src[j] === '.') {
+        j++; prec = 0;
+        while (j < src.length && src[j] >= '0' && src[j] <= '9') prec = prec * 10 + (src.charCodeAt(j++) - 48);
+      }
       const kind = src[j];
       const v = args[ai++];
-      if (kind === 'd' || kind === 'u') out += String(v ?? 0);
-      else if (kind === 's') out += this.stringAt(v ?? 0, fromScript);
-      else if (kind === 'c') out += String.fromCharCode(v ?? 32);
-      else if (kind === 'x') out += (v ?? 0).toString(16);
-      else if (kind === '%') { out += '%'; ai--; }
-      else { out += src.slice(i, j + 1); ai--; }
+      let piece: string | null = null;
+      if (kind === 'd') piece = String(s16(u16(v ?? 0)));
+      else if (kind === 'u') piece = String(u16(v ?? 0));
+      else if (kind === 's') piece = this.stringAt(v ?? 0, fromScript);
+      else if (kind === 'c') piece = String.fromCharCode(v ?? 32);
+      else if (kind === 'x') piece = u16(v ?? 0).toString(16);
+      else if (kind === '%') { out += '%'; ai--; i = j; continue; }
+      else { out += src.slice(i, j + 1); ai--; i = j; continue; }
+      if (prec >= 0 && kind === 's') piece = piece.slice(0, prec);
+      if (piece.length < width) {
+        const pad = ' '.repeat(width - piece.length);
+        piece = left ? piece + pad : pad + piece;
+      }
+      out += piece;
       i = j;
     }
     return out;

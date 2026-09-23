@@ -31,6 +31,14 @@ export class Screen {
   private bgPriority = new Uint8Array(WIDTH * HEIGHT);
   /** Text above the picture, drawn last and never covered by it. */
   status = '';
+  /**
+   * The status line's own pixels.
+   *
+   * It sits outside the picture and survives everything drawn into it,
+   * so it gets a plane of its own rather than a corner of the visual
+   * one.  White with black text, as SCI0 draws it.
+   */
+  statusBar = new Uint8Array(WIDTH * STATUS_HEIGHT).fill(0xFF);
   /** Set when the picture changes, so the host knows to repaint. */
   dirty = true;
   /** Undithering is a display choice, not a drawing one. */
@@ -152,8 +160,44 @@ export class Screen {
    * did; undithered blends it, which is the same choice the explorer
    * offers on a picture.
    */
+  /**
+   * Write the status line.
+   *
+   * The text was being kept and never drawn, which left a black band
+   * across the top of every game where the original shows the score.
+   */
+  drawStatus(font: Font | null, text: string) {
+    this.status = text;
+    this.statusBar.fill(0xFF);
+    if (!font) return;
+    let cx = 2;
+    const top = Math.max(0, (STATUS_HEIGHT - font.lineHeight) >> 1);
+    for (const ch of text) {
+      const g = font.chars[ch.charCodeAt(0)];
+      if (!g) continue;
+      for (let gy = 0; gy < g.height; gy++) {
+        const py = top + gy;
+        if (py < 0 || py >= STATUS_HEIGHT) continue;
+        for (let gx = 0; gx < g.width; gx++) {
+          if (!g.bits[gy * g.width + gx]) continue;
+          const px = cx + gx;
+          if (px < 0 || px >= WIDTH) continue;
+          this.statusBar[py * WIDTH + px] = 0x00;
+        }
+      }
+      cx += g.width;
+      if (cx >= WIDTH) break;
+    }
+    this.dirty = true;
+  }
+
   rgb(out = new Uint8Array(WIDTH * SCREEN_HEIGHT * 3)): Uint8Array {
-    out.fill(0, 0, WIDTH * STATUS_HEIGHT * 3);
+    for (let y = 0; y < STATUS_HEIGHT; y++)
+      for (let x = 0; x < WIDTH; x++) {
+        const c = EGA_RGB[ditherPixel(this.statusBar[y * WIDTH + x], x, y)];
+        const o = (y * WIDTH + x) * 3;
+        out[o] = c[0]; out[o + 1] = c[1]; out[o + 2] = c[2];
+      }
     for (let y = 0; y < HEIGHT; y++) {
       for (let x = 0; x < WIDTH; x++) {
         const v = this.visual[y * WIDTH + x];
