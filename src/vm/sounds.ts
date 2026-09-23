@@ -23,6 +23,8 @@ import { parseSound, type Sound } from '../sound.ts';
 import { parseBank, type Instrument } from '../opl/patch.ts';
 import { Player } from '../opl/player.ts';
 import { OPL_RATE } from '../opl/opl2.ts';
+import { parsePatchBank, gmPatchMap } from '../mt32.ts';
+import { toGeneralMidi, type GmEvent } from '../gmstream.ts';
 
 export type SndVerb =
   | 'init' | 'play' | 'dispose' | 'stop' | 'pause' | 'soundOn' | 'masterVolume'
@@ -59,6 +61,9 @@ const SCI01_VERBS: Record<number, SndVerb> = {
 /** The signal value a script reads as "this piece has finished". */
 export const SIGNAL_FINISHED = -1;
 
+/** Where the music goes: the game's own chip, or a GM synthesiser. */
+export type Output = 'adlib' | 'midi';
+
 interface Entry {
   /** The game's `Sound` object, which owns the properties we report to. */
   handle: number;
@@ -70,6 +75,15 @@ interface Entry {
   reported: boolean;
   /** How many of the piece's cues have already been handed over. */
   cueIndex: number;
+  /**
+   * The piece as General MIDI, translated the first time it is wanted.
+   *
+   * Most sessions never ask: the AdLib path is the default, and doing
+   * this for all 165 of Camelot's scores on the way past would be work
+   * done for nothing.
+   */
+  gm: GmEvent[] | null;
+  gmIndex: number;
   /** The tick the piece started on, which is what decides when it ends. */
   startTick: number;
 }
@@ -85,6 +99,19 @@ export class SoundBox {
   private ended: number[] = [];
   /** Cues come due, by handle, oldest first. */
   private cued: Array<{ handle: number; signal: number }> = [];
+  /**
+   * Where the music is sent.
+   *
+   * The AdLib path synthesises the game's own chip from its own bank
+   * and is what it sounded like; the MIDI path hands the score to a
+   * General MIDI synthesiser, which is a different instrument playing
+   * the same notes.
+   */
+  output: Output = 'adlib';
+  /** GM programs for the game's patches, read from `patch.001`. */
+  private gmPatches: Int8Array | null = null;
+  /** MIDI messages due to be sent, oldest first. */
+  private midiOut: GmEvent[] = [];
 
   /** True when the game speaks SCI01's renumbered subops. */
   sci01 = false;
@@ -123,7 +150,17 @@ export class SoundBox {
     // The AdLib bank is patch resource 3.  A game without one can still
     // be played; it simply makes no music.
     try { this.bank = parseBank(game.data(9, 3)); } catch { this.bank = null; }
+    // The MT-32 bank, which is the only place the game says what its
+    // programs were meant to sound like.  A game without one can still
+    // play on the chip; it simply cannot be mapped to General MIDI.
+    try {
+      const b = parsePatchBank(game.data(9, 1));
+      this.gmPatches = b ? gmPatchMap(b) : null;
+    } catch { this.gmPatches = null; }
   }
+
+  /** True when this game carries the bank a GM mapping needs. */
+  get canPlayGeneralMidi() { return this.gmPatches !== null; }
 
   get available() { return this.bank !== null; }
   /** How many pieces are sounding, for the HUD and for tests. */
@@ -155,7 +192,8 @@ export class SoundBox {
     const player = new Player(sound, this.bank);
     player.gain = this.gainFor();
     this.live.set(handle, { handle, number, sound, player, playing: false,
-                            reported: false, cueIndex: 0, startTick: 0 });
+                            reported: false, cueIndex: 0, gm: null, gmIndex: 0,
+                            startTick: 0 });
   }
 
   play(handle: number, number: number, loop: boolean, atTick = 0) {
@@ -169,6 +207,7 @@ export class SoundBox {
     e.reported = false;
     // A piece played again cues again, from its first.
     e.cueIndex = 0;
+    e.gmIndex = 0;
     e.startTick = atTick;
   }
 
@@ -181,13 +220,58 @@ export class SoundBox {
   stop(handle: number) {
     const e = this.live.get(handle);
     if (!e) return;
+    if (this.output === 'midi' && e.playing) this.silence(e);
     e.playing = false;
     e.player.rewind();
+  }
+
+  /**
+   * Let go of every note a piece is holding.
+   *
+   * A synthesiser on the other end of a wire does not stop when we do:
+   * a note-on it has been sent sounds until something takes it off, so
+   * a piece cut short leaves its last chord hanging for ever.
+   */
+  private asGeneralMidi(e: Entry): GmEvent[] {
+    e.gm ??= this.gmPatches ? toGeneralMidi(e.sound, this.gmPatches) : [];
+    return e.gm;
+  }
+
+  private silence(e: Entry) {
+    const used = new Set(this.asGeneralMidi(e).map(v => v.status & 0x0F));
+    // 0x7B is all-notes-off; 0x79 resets the controllers we changed.
+    for (const ch of used) {
+      this.midiOut.push({ tick: 0, status: 0xB0 | ch, a: 0x7B, b: 0 });
+      this.midiOut.push({ tick: 0, status: 0xB0 | ch, a: 0x79, b: 0 });
+    }
+  }
+
+  /**
+   * MIDI messages due since this was last called.
+   *
+   * The host owns the wire -- a browser reaches a synthesiser through
+   * Web MIDI, which the machine knows nothing about -- so the box
+   * queues and the host sends.
+   */
+  takeMidi(): GmEvent[] {
+    const out = this.midiOut;
+    this.midiOut = [];
+    return out;
   }
 
   dispose(handle: number) { this.stop(handle); this.live.delete(handle); }
 
   stopAll() { for (const h of [...this.live.keys()]) this.stop(h); }
+
+  /** Hand the music to a different output, leaving nothing sounding. */
+  setOutput(to: Output) {
+    if (to === this.output) return;
+    if (this.output === 'midi')
+      for (const e of this.live.values()) if (e.playing) this.silence(e);
+    this.output = to;
+    // A piece already under way resumes from where the clock says it is.
+    if (to === 'midi') for (const e of this.live.values()) e.gmIndex = 0;
+  }
 
   /**
    * Fade a piece out.
@@ -241,6 +325,15 @@ export class SoundBox {
       this.cued.push({ handle: e.handle, signal: cues[e.cueIndex].signal });
       e.cueIndex++;
     }
+    if (this.output === 'midi') {
+      for (const e of this.live.values()) {
+        if (!e.playing) continue;
+        const gm = this.asGeneralMidi(e);
+        const due = nowTick - e.startTick;
+        while (e.gmIndex < gm.length && gm[e.gmIndex].tick <= due)
+          this.midiOut.push(gm[e.gmIndex++]);
+      }
+    }
     for (const e of this.live.values()) {
       if (!e.playing || e.player.loop || e.reported) continue;
       // `ticks` is the piece's own length, in the same sixtieths the
@@ -285,6 +378,8 @@ export class SoundBox {
    */
   mix(out: Float32Array) {
     out.fill(0);
+    // The synthesiser at the other end is making the sound, not us.
+    if (this.output === 'midi') return;
     if (!this.live.size) return;
     const scratch = new Float32Array(out.length);
     for (const e of this.live.values()) {

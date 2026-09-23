@@ -262,6 +262,7 @@ function stopPlay() {
   field.hidden = true;
   ($('mic') as HTMLElement).hidden = true;
   ($('speed') as HTMLElement).hidden = true;
+  ($('output') as HTMLElement).hidden = true;
   ($('dither') as HTMLElement).hidden = true;
   cv.removeEventListener('mousedown', grabFocus);
   window.removeEventListener('pointerup', returnFocus);
@@ -354,6 +355,49 @@ function returnFocus(e: Event) {
  * the music is paced by the audio clock rather than by the frame rate
  * and cannot drift away from what the chip is meant to be playing.
  */
+/**
+ * The synthesiser on the other end of Web MIDI, once one is chosen.
+ *
+ * The browser only offers this on a secure origin and only after the
+ * user has allowed it, so everything here is written to do nothing
+ * quietly when there is no port rather than to insist on one.
+ */
+let midiPort: { send(data: number[]): void } | null = null;
+let midiPorts: Array<{ id: string; name: string; port: { send(data: number[]): void } }> = [];
+
+interface MidiLike {
+  outputs: Map<string, { id: string; name?: string; send(d: number[]): void }>;
+}
+
+/** Ask for the MIDI outputs, and say whether any turned up. */
+async function findMidiPorts(): Promise<boolean> {
+  const nav = navigator as Navigator & { requestMIDIAccess?: () => Promise<MidiLike> };
+  if (!nav.requestMIDIAccess) return false;
+  try {
+    const access = await nav.requestMIDIAccess();
+    midiPorts = [...access.outputs.values()].map(p =>
+      ({ id: p.id, name: p.name ?? p.id, port: p }));
+    return midiPorts.length > 0;
+  } catch { return false; }
+}
+
+/**
+ * Send whatever the driver has queued.
+ *
+ * Messages go out as they come due rather than being scheduled ahead:
+ * the queue is filled from the game's own clock, which the player can
+ * speed up or stop, so a timestamp handed to the synthesiser now may be
+ * wrong by the time it arrives.
+ */
+function pumpMidi(s: Session) {
+  const due = s.vm.sounds.takeMidi();
+  if (!midiPort) return;
+  for (const e of due) {
+    const wide = (e.status & 0xF0) !== 0xC0 && (e.status & 0xF0) !== 0xD0;
+    midiPort.send(wide ? [e.status, e.a & 0x7F, e.b & 0x7F] : [e.status, e.a & 0x7F]);
+  }
+}
+
 function pumpAudio(s: Session) {
   const ctx = audio;
   if (!ctx || !gameGain) return;
@@ -424,6 +468,37 @@ function startPlay() {
     speed.blur();
     grabFocus();
   };
+
+  /**
+   * Where the music goes.
+   *
+   * The AdLib entry is always there because the game carries its own
+   * chip bank; a General MIDI entry appears only once the browser has
+   * handed over a synthesiser to send to, and only for a game that
+   * ships the MT-32 bank a mapping needs.  Asking for MIDI access
+   * prompts the user, so it is asked for when the menu is opened
+   * rather than when the game starts.
+   */
+  const output = $('output') as HTMLSelectElement;
+  output.hidden = false;
+  const fillOutputs = async () => {
+    if (!s.vm.sounds.canPlayGeneralMidi || midiPorts.length) return;
+    if (!await findMidiPorts()) return;
+    for (const p of midiPorts) {
+      const o = document.createElement('option');
+      o.value = p.id;
+      o.textContent = `GM · ${p.name}`;
+      output.append(o);
+    }
+  };
+  output.onpointerdown = () => { void fillOutputs(); };
+  output.onchange = () => {
+    const chosen = midiPorts.find(p => p.id === output.value);
+    midiPort = chosen?.port ?? null;
+    s.vm.sounds.setOutput(chosen ? "midi" : "adlib");
+    output.blur();
+    grabFocus();
+  };
   grabFocus();
   // Clicking the picture must not take focus away from the field, and
   // clicking anything else must give it back.
@@ -453,11 +528,14 @@ function startPlay() {
     $('hud').textContent =
       `${st.frames} frames · ${(st.instructions / 1e6).toFixed(1)}M instructions` +
       `${st.picture >= 0 ? ` · picture ${st.picture}` : ''}` +
-      (session.vm.sounds.active ? ` · ♪ ${session.vm.sounds.active}` : '') +
+      (session.vm.sounds.active
+        ? ` · ♪ ${session.vm.sounds.active}${session.vm.sounds.output === 'midi' ? ' (GM)' : ''}`
+        : '') +
       (st.running ? `  ·  ${session.cyclesPerSecond.toFixed(0)} cycles/s` +
                     '  ·  esc for the menu bar  ·  shift-esc to leave  ·  fn fn to dictate'
                   : `  ·  stopped: ${st.stopped ?? ''}`);
-    if (session.vm.sounds.available) pumpAudio(session);
+    if (session.vm.sounds.output === 'midi') pumpMidi(session);
+    else if (session.vm.sounds.available) pumpAudio(session);
     if (st.running) { raf = requestAnimationFrame(frame); return; }
     raf = 0;
     /**
