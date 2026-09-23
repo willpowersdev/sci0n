@@ -264,6 +264,8 @@ function stopPlay() {
   ($('speed') as HTMLElement).hidden = true;
   ($('dither') as HTMLElement).hidden = true;
   cv.removeEventListener('mousedown', grabFocus);
+  window.removeEventListener('pointerup', returnFocus);
+  window.removeEventListener('focus', grabFocus);
   if (current) render();
 }
 
@@ -308,12 +310,33 @@ function onDictate() {
   }
 }
 
-/** Keep the hidden field focused, or dictation has nowhere to go. */
+/**
+ * Keep the hidden field focused.
+ *
+ * Only printable characters come through it; everything else is read
+ * from a window-level keydown listener.  So losing this focus does not
+ * look like "the keyboard stopped working" -- menus, Enter and the
+ * arrows all carry on, and only typing goes dead.  Clicking any control
+ * in the play bar was enough to do it.
+ */
 function grabFocus() {
+  if (!session) return;
   const el = $('dictate') as HTMLInputElement;
   el.hidden = false;
   el.value = '';
   el.focus({ preventScroll: true });
+}
+
+/**
+ * Give the keyboard back after the play bar has had its click.
+ *
+ * A `<select>` needs to keep focus while it is open, so this waits for
+ * the end of the event and skips one that is still being used.
+ */
+function returnFocus(e: Event) {
+  const t = e.target as HTMLElement | null;
+  if (t && (t.tagName === 'SELECT' || t.tagName === 'OPTION')) return;
+  setTimeout(grabFocus, 0);
 }
 
 /**
@@ -394,10 +417,20 @@ function startPlay() {
   const speed = $('speed') as HTMLSelectElement;
   speed.hidden = false;
   s.cyclesPerSecond = Number(speed.value) || 20;
-  speed.onchange = () => { if (session) session.cyclesPerSecond = Number(speed.value) || 20; };
+  speed.onchange = () => {
+    if (session) session.cyclesPerSecond = Number(speed.value) || 20;
+    // The dropdown keeps the keyboard while it is open; typing has to
+    // work again the moment it is done with.
+    speed.blur();
+    grabFocus();
+  };
   grabFocus();
-  // Clicking the picture must not take focus away from the field.
+  // Clicking the picture must not take focus away from the field, and
+  // clicking anything else must give it back.
   cv.addEventListener('mousedown', grabFocus);
+  window.addEventListener('pointerup', returnFocus);
+  // Coming back to the tab should not require a click first.
+  window.addEventListener('focus', grabFocus);
 
   // A page that has not been interacted with may not start audio, so the
   // context is created here and resumed on the first key or click.

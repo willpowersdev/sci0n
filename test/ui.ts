@@ -16,6 +16,8 @@ const PORT = 8017, ORIGIN = `http://localhost:${PORT}`;
 const GAME = process.argv[2] ?? 'QFG2';
 
 const reg = new Map<string, El>();
+/** Whatever last had `focus()` called on it. */
+let focused: El | null = null;
 const idsIn = (html: string) => [...html.matchAll(/id="([^"]+)"/g)].map(m => m[1]);
 
 class El {
@@ -26,15 +28,25 @@ class El {
   classList = { add() {}, remove() {} };
   disabled = false;
   value = '';
-  addEventListener() {}
-  focus() {}
-  blur() {}
+  // Focus and listeners are real here, because the bug they catch is
+  // invisible otherwise: only printable characters travel through the
+  // hidden field, so losing its focus leaves menus and arrows working
+  // and kills nothing but typing.
+  listeners: Record<string, Function[]> = {};
+  addEventListener(t: string, fn: Function) { (this.listeners[t] ??= []).push(fn); }
+  removeEventListener(t: string, fn: Function) {
+    this.listeners[t] = (this.listeners[t] ?? []).filter(f => f !== fn);
+  }
+  dispatch(t: string, ev: any = {}) { for (const fn of this.listeners[t] ?? []) fn({ target: this, ...ev }); }
+  focus() { focused = this; }
+  blur() { if (focused === this) focused = null; }
   getBoundingClientRect() { return { left: 0, top: 0, width: 960, height: 684 }; }
   textContent = ''; className = ''; value = ''; hidden = false;
   width = 0; height = 0;
   onclick: (() => void) | null = null; onchange: (() => void) | null = null;
   private _id: string | null = null;
   constructor(tag: string) { this.tag = tag; }
+  get tagName() { return this.tag.toUpperCase(); }
   set id(v: string) { this._id = v; if (v) reg.set(v, this); }
   get id() { return this._id ?? ''; }
   unregister() {
@@ -80,8 +92,15 @@ g.requestAnimationFrame = () => 1;
 g.cancelAnimationFrame = () => {};
 g.Option = class { text: string; value: string;
   constructor(t: string, v: string) { this.text = t; this.value = v; } };
-g.window = { setInterval: () => 1, clearInterval: () => {},
-             addEventListener: () => {}, removeEventListener: () => {} };
+const winListeners: Record<string, Function[]> = {};
+g.window = {
+  setInterval: () => 1, clearInterval: () => {},
+  addEventListener: (t: string, fn: Function) => { (winListeners[t] ??= []).push(fn); },
+  removeEventListener: (t: string, fn: Function) => {
+    winListeners[t] = (winListeners[t] ?? []).filter(f => f !== fn);
+  },
+};
+const fireWindow = (t: string, ev: any = {}) => { for (const fn of winListeners[t] ?? []) fn(ev); };
 // Playback is user-driven and not exercised here; the viewer only has to
 // build its controls without an audio device present.
 g.AudioContext = class { sampleRate = 44100; resume() { return Promise.resolve(); }
@@ -97,8 +116,12 @@ g.history = { replaceState() {} };
 // The skeleton index.html declares, including #title inside #bar.
 for (const id of ['pick', 'gameinfo', 'tabs', 'list', 'bar', 'title',
                   'controls', 'stage', 'cv', 'text', 'play', 'quit', 'hud',
-                  'dictate', 'mic', 'speed']) {
-  const e = new El(id === 'cv' ? 'canvas' : 'div'); e.id = id;
+                  'dictate', 'mic', 'speed', 'dither']) {
+  // The tag matters for #speed: the page leaves a dropdown holding the
+  // keyboard while it is open, and tells it apart by tag name.
+  const tag = id === 'cv' ? 'canvas' : id === 'speed' ? 'select'
+            : id === 'dictate' ? 'input' : 'div';
+  const e = new El(tag); e.id = id;
 }
 reg.get('bar')!.children.push(reg.get('title')!, reg.get('controls')!);
 
@@ -176,6 +199,53 @@ for (const t of tabs()) {
   clickRows(t.textContent, 6);
 }
 
+/**
+ * Typing reaches the game after the play bar has been touched.
+ *
+ * Printable characters are read from a hidden input; everything else
+ * comes off a window-level keydown listener.  So when that input loses
+ * focus the failure is a strange one -- Escape still opens the menu,
+ * the arrows still move, Return still works, and only letters go
+ * nowhere, which reads as "the parser stopped appearing" rather than
+ * as a keyboard problem.  Changing the speed took the focus and never
+ * gave it back.
+ */
+{
+  reg.get('play')!.onclick?.();
+  const dictate = reg.get('dictate')!;
+  if ((reg.get('quit') as El).hidden) {
+    console.log(`\nplay mode did not start for ${GAME}; typing not checked`);
+  } else {
+    const check = (what: string, ok: boolean) => {
+      if (!ok) failed++;
+      console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${what}`);
+    };
+    console.log('\ntyping:');
+    check('starting play focuses the field characters arrive in', focused === dictate);
+
+    // The speed dropdown keeps the keyboard while it is open.
+    const speed = reg.get('speed')! as El;
+    speed.focus();
+    speed.value = '40';
+    speed.onchange?.();
+    check('changing the speed gives the keyboard back', focused === dictate);
+
+    // Any other click in the bar, then the browser's own event order.
+    const dither = reg.get('dither')! as El;
+    dither.focus();
+    fireWindow('pointerup', { target: dither });
+    await sleep(5);
+    check('clicking a play-bar button gives the keyboard back', focused === dictate);
+
+    // ...but a click on the dropdown itself must not steal it back
+    // while the menu is still open.
+    focused = speed;
+    fireWindow('pointerup', { target: speed });
+    await sleep(5);
+    check('a click on the dropdown leaves it holding the keyboard', focused === speed);
+  }
+}
+
 child?.kill();
-console.log(failed ? `\n${failed} tab(s) broke` : '\nselection works repeatedly across tabs');
+console.log(failed ? `\n${failed} check(s) broke` : '\nselection works repeatedly across tabs, and typing survives the play bar');
 process.exit(failed ? 1 : 0);
