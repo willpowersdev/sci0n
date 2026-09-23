@@ -26,6 +26,7 @@ import { STATUS_HEIGHT } from './vm/screen.ts';
 import { EV } from './vm/pmachine.ts';
 import { Scene } from './scene.ts';
 import { picHistogram, unditherCel } from './undither.ts';
+import { CrtDisplay } from './crt.ts';
 import * as RG from './roomgraph.ts';
 
 const SCALE = 3, ASPECT = 1.2;
@@ -109,7 +110,30 @@ async function sourceFromServer(name: string): Promise<ResourceSource> {
   return { names: () => [...bytes.keys()], read: (n) => bytes.get(n)! };
 }
 
+/**
+ * The screen the picture is shown on, when one is asked for.
+ *
+ * Built on first use and kept: it holds compiled programs and textures,
+ * and a browser that will not give us WebGL2 leaves it null for good.
+ */
+let crt: CrtDisplay | null = null;
+let crtTried = false;
+let enhanced = false;
+
 function blit(rgb: Uint8Array, w: number, h: number, alpha?: Uint8Array) {
+  cv.width = w * SCALE; cv.height = Math.round(h * SCALE * ASPECT);
+  // The overlays draw with transparency, which the tube has no notion
+  // of; anything carrying an alpha channel goes straight to the canvas.
+  if (enhanced && !alpha) {
+    if (!crtTried) { crtTried = true; crt = CrtDisplay.create(); }
+    if (crt) {
+      ctx.imageSmoothingEnabled = false;
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      ctx.drawImage(crt.render(rgb, w, h, cv.width, cv.height), 0, 0);
+      return;
+    }
+    enhanced = false;                  // no WebGL2; do not ask again
+  }
   off.width = w; off.height = h;
   const img = octx.createImageData(w, h);
   for (let i = 0, o = 0; i < w * h; i++) {
@@ -117,7 +141,6 @@ function blit(rgb: Uint8Array, w: number, h: number, alpha?: Uint8Array) {
     img.data[o++] = rgb[i * 3 + 2]; img.data[o++] = alpha ? alpha[i] : 255;
   }
   octx.putImageData(img, 0, 0);
-  cv.width = w * SCALE; cv.height = Math.round(h * SCALE * ASPECT);
   ctx.imageSmoothingEnabled = false;
   ctx.clearRect(0, 0, cv.width, cv.height);
   ctx.drawImage(off, 0, 0, cv.width, cv.height);
@@ -263,6 +286,7 @@ function stopPlay() {
   ($('mic') as HTMLElement).hidden = true;
   ($('speed') as HTMLElement).hidden = true;
   ($('output') as HTMLElement).hidden = true;
+  ($('crt') as HTMLElement).hidden = true;
   ($('dither') as HTMLElement).hidden = true;
   cv.removeEventListener('mousedown', grabFocus);
   window.removeEventListener('pointerup', returnFocus);
@@ -450,6 +474,28 @@ function startPlay() {
     dither.textContent = s.screen.undither ? '▦ blended' : '▦ dithered';
   };
   showDither();
+
+  /**
+   * The picture on a tube, or flat.
+   *
+   * Off by default: it costs a little to draw and it is a matter of
+   * taste, even though the art was made for it.  Hidden altogether
+   * where the browser will not give us WebGL2, since the button would
+   * do nothing.
+   */
+  const crtBtn = $('crt') as HTMLButtonElement;
+  if (!crtTried) { crtTried = true; crt = CrtDisplay.create(); }
+  crtBtn.hidden = crt === null;
+  const showCrt = () => { crtBtn.textContent = enhanced ? '📺 CRT' : '📺 flat'; };
+  showCrt();
+  crtBtn.onclick = () => {
+    enhanced = !enhanced;
+    showCrt();
+    if (session) session.screen.dirty = true;
+    crtBtn.blur();
+    grabFocus();
+  };
+
   dither.onclick = () => {
     if (!session) return;
     session.screen.undither = !session.screen.undither;
