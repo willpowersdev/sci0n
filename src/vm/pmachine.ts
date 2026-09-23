@@ -1060,6 +1060,36 @@ export class PMachine {
   }
 
   /**
+   * May this actor stand on this rectangle?
+   *
+   * The only place the question is answered, because it is asked from
+   * two directions and they must not drift apart.  They did.  The
+   * kernel's `CanBeHere` had its "must fit inside the picture" test
+   * taken out -- the edge of a picture is not a wall, and a room that
+   * wants a way out simply leaves its edge unpainted -- but the test
+   * inside `DoBresen`, which is the one every walk actually passes
+   * through, kept its own copy.
+   *
+   * So the answer depended on who asked.  Merlin's room is left by
+   * walking off the bottom, `Rm2::doit` watching for the ego's y to
+   * pass 188; the ego steps two rows at a time and its base reaches one
+   * row below its feet, so a step to y 190 puts the base at 191 and the
+   * step was refused.  `CanBeHere` said that position was fine, and
+   * putting the ego there by hand did leave the room -- it simply could
+   * never walk there.  It stopped at 188 exactly, one short, in a room
+   * with no other way out.  Gwenhyver's bower is the same shape: out
+   * through the right-hand edge, `x` past 308.
+   */
+  private standable(o: RtObject, left: number, top: number, right: number,
+                    bottom: number, cast: number): boolean {
+    if (right <= left || bottom <= top) return true;   // no base yet
+    if (this.blockedByCast(o, left, top, right, bottom, cast)) return false;
+    const illegal = u16(this.prop(o, 'illegalBits'));
+    if (!illegal) return true;
+    return (this.controlBits(left, top, right, bottom) & illegal) === 0;
+  }
+
+  /**
    * Could this actor stand with its feet at (x, y)?
    *
    * The base rectangle is worked out for the position being considered
@@ -1069,11 +1099,7 @@ export class PMachine {
   private legalAt(o: RtObject, x: number, y: number): boolean {
     const b = this.baseRectOf(o, x, y);
     if (!b) return true;
-    if (b.left < 0 || b.right > WIDTH || b.top < 0 || b.bottom > HEIGHT) return false;
-    if (this.blockedByCast(o, b.left, b.top, b.right, b.bottom, this.cast)) return false;
-    const illegal = u16(this.prop(o, 'illegalBits'));
-    if (!illegal) return true;
-    return (this.controlBits(b.left, b.top, b.right, b.bottom) & illegal) === 0;
+    return this.standable(o, b.left, b.top, b.right, b.bottom, this.cast);
   }
 
   /**
@@ -2356,30 +2382,11 @@ export class PMachine {
         const right = s16(u16(this.prop(o, 'brRight')));
         const top = s16(u16(this.prop(o, 'brTop')));
         const bottom = s16(u16(this.prop(o, 'brBottom')));
-        if (right <= left || bottom <= top) return 1;    // no base yet
-        /**
-         * The edge of the picture is not a wall.
-         *
-         * This used to refuse any base that reached past the picture,
-         * which sounds like common sense and is not what the original
-         * does: it asks the control plane and the other actors, and
-         * nothing else.  Keeping an actor on screen is the control
-         * plane's job, and a room that wants a way out simply leaves
-         * its edge unpainted.
-         *
-         * Merlin's room is one.  It is left by walking off the bottom
-         * -- `Rm2::doit` watches for the ego's y passing 188 and sends
-         * it back to the map -- and the ego steps two rows at a time
-         * from an even start, so the highest it could ever reach with
-         * that check in place was 188 exactly.  One short, in a room
-         * with no other exit.
-         */
         // `Act::canBeHere` hands over the cast so that actors can stand
-        // in each other's way.
-        if (this.blockedByCast(o, left, top, right, bottom, a1 || this.cast)) return 0;
-        const illegal = u16(this.prop(o, 'illegalBits'));
-        if (!illegal) return 1;
-        return (this.controlBits(left, top, right, bottom) & illegal) ? 0 : 1;
+        // in each other's way.  Everything else this has to weigh --
+        // including the edge of the picture, which is not a wall -- is
+        // in `standable`, which the walk itself also asks.
+        return this.standable(o, left, top, right, bottom, a1 || this.cast) ? 1 : 0;
       }
 
       /**
