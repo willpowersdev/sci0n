@@ -1216,13 +1216,22 @@ cv.addEventListener('mousemove', (e) => {
   const y = Math.round((e.clientY - r.top) / r.height * SCREEN_HEIGHT) - 10;
   session.move(Math.max(0, Math.min(319, x)), Math.max(0, Math.min(189, y)));
 });
-cv.addEventListener('mousedown', (e) => {
-  if (!session) return;
-  const r = cv.getBoundingClientRect();
-  const x = Math.round((e.clientX - r.left) / r.width * WIDTH);
-  const y = Math.round((e.clientY - r.top) / r.height * SCREEN_HEIGHT) - 10;
-  session.mouse(EV.mouseDown, Math.max(0, Math.min(319, x)), Math.max(0, Math.min(189, y)));
-});
+/**
+ * Both halves of a click.
+ *
+ * A dialog highlights the control under the press and commits it on the
+ * release, so sending only the press left Camelot's opening menu
+ * following the mouse without ever accepting a choice.
+ */
+for (const [name, type] of [['mousedown', EV.mouseDown], ['mouseup', EV.mouseUp]] as const) {
+  cv.addEventListener(name, (e) => {
+    if (!session) return;
+    const r = cv.getBoundingClientRect();
+    const x = Math.round(((e as MouseEvent).clientX - r.left) / r.width * WIDTH);
+    const y = Math.round(((e as MouseEvent).clientY - r.top) / r.height * SCREEN_HEIGHT) - 10;
+    session.mouse(type, Math.max(0, Math.min(319, x)), Math.max(0, Math.min(189, y)));
+  });
+}
 
 ($('pick') as HTMLInputElement).onchange = async (e) => {
   const files = (e.target as HTMLInputElement).files;

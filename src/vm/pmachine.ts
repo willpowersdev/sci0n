@@ -829,6 +829,25 @@ export class PMachine {
   }
 
   /**
+   * Move an event between screen and window coordinates.
+   *
+   * A control's rectangle is relative to the window it sits in, so a
+   * dialog converts the event before asking which control was hit.
+   * Passing the coordinates through unchanged -- which is what this did,
+   * on the grounds that one port covered the whole picture -- tests the
+   * click against the wrong rectangles, and Camelot's opening menu could
+   * only be worked with the keyboard.
+   */
+  private shiftEvent(ref: number, sign: number): number {
+    const ev = this.resolveTarget(null, ref);
+    if (!ev) return 0;
+    const p = this.port;
+    this.setProp(ev, 'x', s16(u16(this.prop(ev, 'x'))) + sign * p.x);
+    this.setProp(ev, 'y', s16(u16(this.prop(ev, 'y'))) + sign * p.y);
+    return ref;
+  }
+
+  /**
    * The strip of floor a cast member stands on.
    *
    * Worked out from where the member is now rather than read back from
@@ -1412,11 +1431,18 @@ export class PMachine {
         return 0;
       }
 
-      case 'GlobalToLocal': case 'LocalToGlobal': {
-        // There is one port covering the picture, so the two spaces are
-        // the same and the coordinates pass through unchanged.
-        return 0;
-      }
+      /**
+       * Move an event between screen and window coordinates.
+       *
+       * A control's rectangle is relative to the window it sits in, so
+       * a dialog converts the event before asking which control was
+       * hit.  Passing the coordinates through unchanged -- which is
+       * what this did, on the grounds that one port covered the whole
+       * picture -- tests the click against the wrong rectangles, and
+       * Camelot's menu could only be worked with the keyboard.
+       */
+      case 'GlobalToLocal': return this.shiftEvent(a0, -1);
+      case 'LocalToGlobal': return this.shiftEvent(a0, 1);
 
       // --- input --------------------------------------------------------
       case 'HaveMouse': return 1;
@@ -1428,7 +1454,21 @@ export class PMachine {
         const mask = a0;
         const ev = this.resolveTarget(null, a1);
         const i = this.events.findIndex(e => (e.type & mask) !== 0);
-        if (i < 0) { if (ev) this.setProp(ev, 'type', EV.null); return 0; }
+        if (i < 0) {
+          // An empty queue still has to say where the pointer is.  A
+          // control being dragged polls this in a loop and asks whether
+          // the pointer is still over it; a null event reporting 0,0
+          // answers no, so Camelot's menu highlighted under the mouse
+          // and then refused every click.
+          if (ev) {
+            this.setProp(ev, 'type', EV.null);
+            this.setProp(ev, 'message', 0);
+            this.setProp(ev, 'modifiers', 0);
+            this.setProp(ev, 'x', this.mouseX);
+            this.setProp(ev, 'y', this.mouseY);
+          }
+          return 0;
+        }
         const e = this.events[i];
         if (!(mask & EV.peek)) this.events.splice(i, 1);
         if (ev) {
