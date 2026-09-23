@@ -89,6 +89,16 @@ const MAX_FRAMES = 1024;
 export const SIGNAL_FIXED_PRIORITY = 0x10;
 
 /**
+ * Window styles, as the games pass them to `NewWindow`.
+ *
+ * A "user" window such as Camelot's options box asks for transparency
+ * and draws its own decoration; filling and framing it here paints over
+ * what it meant to show.
+ */
+export const WINDOW_TRANSPARENT = 0x01;
+export const WINDOW_NOFRAME = 0x02;
+
+/**
  * Signal bits that say an actor is not there to be bumped into.
  *
  * 0x4000 is "ignore actors": `Act::canBeHere` skips the whole check when
@@ -254,11 +264,15 @@ export class PMachine {
    * `ns` rectangle lands inside the dialog rather than at the top-left
    * of the screen.
    */
-  private ports: Array<{ x: number; y: number; w: number; h: number }> =
+  private ports: Array<{ x: number; y: number; w: number; h: number;
+                        /** The colours the window was opened with. */
+                        pen?: number; back?: number; style?: number }> =
     [{ x: 0, y: 0, w: WIDTH, h: HEIGHT }];
   private windows = new Map<number, {
     rect: { x0: number; y0: number; w: number; h: number; buf: Uint8Array };
     port: { x: number; y: number; w: number; h: number };
+    /** The screen's record of what the picture may not be drawn over. */
+    area: { x0: number; y0: number; x1: number; y1: number };
   }>();
 
   constructor(game: Game, index?: Index) {
@@ -441,7 +455,24 @@ export class PMachine {
           const ref = this.varRef(kind, idx, f.scriptNo, f);
           if (!ref) { res.stopped = 'error'; res.detail = `var ${kind}[${idx}] out of range`; break; }
           if (grp === 0) { const v = ref.get(); if (toStack) st.push(v); else this.acc = v; }
-          else if (grp === 1) { const v = toStack ? (st.pop() ?? 0) : this.acc; ref.set(v); }
+          else if (grp === 1) {
+            // An indexed store takes its index from the accumulator, so
+            // the value can only come from the stack -- the `a` in
+            // `sati` names where the index is, not where the value is.
+            // Reading the accumulator for both stored the index over
+            // the value: `Print` builds its buttons with
+            // `buttons[i] = (DButton new: ...)` and every one of them
+            // came out as the loop counter, so the game's opening menu
+            // had a title and no buttons to press.
+            const v = (toStack || indexed) ? (st.pop() ?? 0) : this.acc;
+            ref.set(v);
+            // An indexed store is an expression: the compiler needs the
+            // accumulator for the index, so it pushes the value, and
+            // what it assigned has to come back out.  `Print` writes
+            // `(buttons[i] = (DButton new:)) text: ... value: ...` --
+            // the send that follows takes its receiver from here.
+            if (indexed) this.acc = v;
+          }
           else { const v = ref.get() + (grp === 2 ? 1 : -1); ref.set(v);
                  if (toStack) st.push(v); else this.acc = v; }
           continue;
@@ -508,8 +539,21 @@ export class PMachine {
           }
 
           case 'lofsa': case 'lofss': {
+            /**
+             * The address of something in this script -- an object, or
+             * a string literal.
+             *
+             * Always tagged with the script it came from, objects and
+             * strings alike.  A bare offset says nothing about where it
+             * points, and these pointers travel: Camelot's script 100
+             * hands "Camelot Game Options:" to the dialog code in
+             * script 255, which reads it back in a frame of its own.
+             * Resolving against whatever script happens to be running
+             * then lands in the wrong resource, and the game's opening
+             * menu came up an empty box eight pixels wide.
+             */
             const off = next + a[0];
-            const v = this.objectAt(f.scriptNo, off) ? makeRef(f.scriptNo, off) : off;
+            const v = makeRef(f.scriptNo, off);
             if (ins.name === 'lofsa') this.acc = v; else st.push(v);
             break;
           }
@@ -754,18 +798,19 @@ export class PMachine {
    * The caret goes where the cursor actually is rather than always at
    * the end, so moving through the line with the arrow keys shows.
    */
-  private drawEditField(o: RtObject, x: number, y: number, w: number, font: Font | null) {
+  private drawEditField(o: RtObject, x: number, y: number, w: number,
+                        font: Font | null, pen = 0, back = 15) {
     if (!font) return;
     const text = this.stringAt(this.prop(o, 'text'), o.scriptNo);
     const h = Math.max(8, font.lineHeight);
     // Clear first: the field is redrawn on every keystroke, and text
     // left behind shows through wherever the new line is shorter.
-    if (w > 0) this.screen.fill(x, y, x + w, y + h, 15);
-    this.screen.text(font, text, x, y, 0);
+    if (w > 0) this.screen.fill(x, y, x + w, y + h, back);
+    this.screen.text(font, text, x, y, pen);
     const cur = Math.max(0, Math.min(text.length, this.prop(o, 'cursor', text.length)));
     let cx = x;
     for (let i = 0; i < cur; i++) cx += font.chars[text.charCodeAt(i)]?.width ?? 0;
-    this.screen.fill(cx, y, cx + 1, y + h, 0);
+    this.screen.fill(cx, y, cx + 1, y + h, pen);
   }
 
   /**
@@ -779,7 +824,8 @@ export class PMachine {
     const x = p.x + this.prop(o, 'nsLeft');
     const y = p.y + this.prop(o, 'nsTop');
     const w = Math.max(0, this.prop(o, 'nsRight') - this.prop(o, 'nsLeft'));
-    this.drawEditField(o, x, y, w, this.font(this.prop(o, 'font')) ?? this.font(0));
+    this.drawEditField(o, x, y, w, this.font(this.prop(o, 'font')) ?? this.font(0),
+                       p.pen ?? 0, p.back ?? 15);
   }
 
   /**
@@ -974,6 +1020,20 @@ export class PMachine {
   animateStats = { calls: 0, doits: 0, max: 0, drawn: 0, names: new Set<string>() };
   /** Priority bands of the current picture. */
   picBands = [42, 53, 64, 74, 85, 95, 106, 116, 127, 138, 148, 159, 169, 180];
+  /** A picture asked for but not yet drawn, and the flag that says so. */
+  private pendingPic: { pic: Picture; clear: boolean; number: number } | null = null;
+  picNotValid = 0;
+
+  /** Paint a picture that has been waiting, if one has. */
+  private showPendingPic() {
+    const p = this.pendingPic;
+    if (!p) return;
+    this.pendingPic = null;
+    this.picNotValid = 0;
+    this.screen.drawPic(p.pic, p.clear);
+    this.picBands = p.pic.priorityBands ?? this.picBands;
+    this.currentPic = p.number;
+  }
 
 
   /** Walk a list to its values, cycle-guarded against damaged links. */
@@ -1049,6 +1109,7 @@ export class PMachine {
    * what puts an actor behind scenery rather than in front of it.
    */
   private drawCast(castH: number) {
+    this.showPendingPic();
     this.screen.restore();
     const drawn: Array<{ o: RtObject; cel: Cel; left: number; top: number;
                         pri: number; y: number; z: number; order: number }> = [];
@@ -1201,15 +1262,24 @@ export class PMachine {
       case 'Animate': return this.animate(a0, f);
 
       // --- picture and cels -------------------------------------------
+      /**
+       * Ask for a new picture.
+       *
+       * It is not painted here.  SCI marks the picture invalid and the
+       * next `Animate` draws it together with the cast, which is what
+       * keeps a room from appearing before the things standing in it --
+       * and what lets a dialog open over the picture that is still on
+       * screen.  Painting immediately blacked out Camelot's title the
+       * moment its options menu was about to be drawn over it.
+       */
       case 'DrawPic': {
         const d = this.game.tryData('pic', a0);
         if (!d) return 0;
         try {
-          const pic = new Picture(d);
-          // `clear` is the third argument; games pass 0 to overlay.
-          this.screen.drawPic(pic, (args[2] ?? 1) !== 0);
-          this.picBands = pic.priorityBands ?? this.picBands;
-          this.currentPic = a0;
+          // The third argument asks to add to the picture already
+          // there; without it the screen is cleared first.
+          this.pendingPic = { pic: new Picture(d), clear: (args[2] ?? 0) === 0, number: a0 };
+          this.picNotValid = 1;
         } catch { /* a picture that will not decode leaves the last one */ }
         return 0;
       }
@@ -1223,6 +1293,9 @@ export class PMachine {
         return 0;
       }
       case 'AddToPic': {
+        // Anything baked in belongs to the picture, so it has to be
+        // there first.
+        this.showPendingPic();
         // Bake the cast list handed in straight into the background.
         for (const val of this.listValues(a0)) {
           const o = this.resolveTarget(null, val);
@@ -1236,7 +1309,12 @@ export class PMachine {
         }
         return 0;
       }
-      case 'PicNotValid': return 0;
+      /** Is a picture waiting to be drawn?  Setting it asks for a redraw. */
+      case 'PicNotValid': {
+        const was = this.picNotValid;
+        if (args.length > 0) this.picNotValid = a0;
+        return was;
+      }
       case 'Graph': return 0;
       case 'GetPort': case 'SetPort': return 0;
 
@@ -1420,18 +1498,59 @@ export class PMachine {
         if (this.strings.has(a1) || isRef(a1)) { src = this.stringAt(a1, f?.scriptNo); i = 2; }
         else { src = this.textLines(a1)[args[2] ?? 0] ?? ''; i = 3; }
         const out = this.format(src, args.slice(i), f?.scriptNo);
-        if (this.strings.has(a0)) { this.strings.set(a0, out); return a0; }
-        return this.makeString(out);
+        if (!a0) return this.makeString(out);
+        this.strings.set(a0, out);
+        return a0;
       }
+      /**
+       * The string kernels.
+       *
+       * A script's buffers are not addressable memory here, so the text
+       * a pointer stands for is kept against the pointer itself and
+       * `stringAt` looks there first.  That makes a copy into a buffer
+       * readable afterwards wherever the pointer travels.
+       *
+       * `StrCpy` returning its destination unchanged, as it did, is not
+       * a harmless stub: `Print` copies the text it was handed into a
+       * buffer of its own before doing anything else, so every dialog
+       * built that way came up empty.  Camelot's opening menu -- "See
+       * the Intro", "Start New Game", "Restore Game" -- was an eight
+       * pixel wide box because of it.
+       */
       case 'StrLen': return this.stringAt(a0, f?.scriptNo).length;
-      case 'StrCpy': return a0;
+      case 'StrCpy': {
+        // A third argument caps the copy, and SCI passes a negative one
+        // to mean "as many as fit", which is the same as no limit here.
+        const n = args.length > 2 ? s16(u16(args[2])) : -1;
+        const src = this.stringAt(a1, f?.scriptNo);
+        this.strings.set(a0, n >= 0 ? src.slice(0, n) : src);
+        return a0;
+      }
+      case 'StrCat': {
+        this.strings.set(a0, this.stringAt(a0, f?.scriptNo) + this.stringAt(a1, f?.scriptNo));
+        return a0;
+      }
       case 'StrCmp': {
-        const x = this.stringAt(a0, f?.scriptNo), y = this.stringAt(a1, f?.scriptNo);
+        let x = this.stringAt(a0, f?.scriptNo), y = this.stringAt(a1, f?.scriptNo);
+        if (args.length > 2) { const n = args[2]; x = x.slice(0, n); y = y.slice(0, n); }
         return x < y ? -1 : x > y ? 1 : 0;
+      }
+      case 'StrEnd': {
+        // The scripts use this to find where to append; the index of the
+        // terminator is the closest thing to that pointer here.
+        return this.stringAt(a0, f?.scriptNo).length;
       }
       case 'StrAt': {
         const t = this.stringAt(a0, f?.scriptNo);
-        return t.charCodeAt(a1) || 0;
+        const i = Math.max(0, s16(u16(a1)));
+        const was = t.charCodeAt(i) || 0;
+        // With a third argument it writes that character and reports
+        // the one it replaced.
+        if (args.length > 2) {
+          const pad = t.length < i ? t + ' '.repeat(i - t.length) : t;
+          this.strings.set(a0, pad.slice(0, i) + String.fromCharCode(args[2] & 0xFF) + pad.slice(i + 1));
+        }
+        return was;
       }
 
       /**
@@ -1443,21 +1562,35 @@ export class PMachine {
        */
       case 'NewWindow': {
         const top = a0, left = a1, bottom = args[2] ?? a0, right = args[3] ?? a1;
+        // NewWindow(top, left, bottom, right, title, style, priority, pen, back)
+        const style = args[5] ?? 0;
+        const pen = args[7] ?? 0;
         const bg = args[8] ?? 15;
         const x0 = Math.max(0, left - 1), y0 = Math.max(0, top - 1);
         const x1 = Math.min(WIDTH, right + 2), y1 = Math.min(HEIGHT, bottom + 2);
         const saved = this.screen.save(x0, y0, x1, y1);
-        this.screen.fill(x0, y0, x1, y1, bg & 0x0F);
-        this.screen.frame(x0, y0, x1, y1, 0);
-        const port = { x: left, y: top, w: Math.max(1, right - left), h: Math.max(1, bottom - top) };
+        // A transparent window paints no background of its own and a
+        // frameless one draws no border: Camelot's options box asks for
+        // both (style 129) and draws its own ornament instead, so
+        // filling it black hid the title art behind it and then the
+        // white text on it as well.
+        if (!(style & WINDOW_TRANSPARENT)) this.screen.fill(x0, y0, x1, y1, bg & 0x0F);
+        if (!(style & (WINDOW_TRANSPARENT | WINDOW_NOFRAME))) this.screen.frame(x0, y0, x1, y1, 0);
+        const port = { x: left, y: top, w: Math.max(1, right - left), h: Math.max(1, bottom - top),
+                       pen: pen & 0x0F, back: bg & 0x0F, style };
         const h = this.alloc();
-        this.windows.set(h, { rect: saved, port });
+        // While it is open the picture is not painted back over it.
+        const area = { x0, y0, x1, y1 };
+        this.screen.windows.push(area);
+        this.windows.set(h, { rect: saved, port, area });
         this.ports.push(port);
         return h;
       }
       case 'DisposeWindow': {
         const w = this.windows.get(a0);
         if (w) {
+          const cover = this.screen.windows.indexOf(w.area);
+          if (cover >= 0) this.screen.windows.splice(cover, 1);
           this.screen.restoreRect(w.rect);
           this.windows.delete(a0);
           const i = this.ports.lastIndexOf(w.port);
@@ -1491,16 +1624,30 @@ export class PMachine {
         const state = this.prop(o, 'state');
         const text = this.stringAt(this.prop(o, 'text'), o.scriptNo);
         const font = this.font(this.prop(o, 'font')) ?? this.font(0);
-        const selected = (state & 1) !== 0;
+        // Bit 0 says the control is enabled; bit 3 says it is the one
+        // highlighted.  The games are explicit about it: Camelot's
+        // three options all carry state 3 and the one under the cursor
+        // is redrawn as 11.  Reading bit 0 as "selected" drew every
+        // button inverted, so all three looked picked at once.
+        const selected = (state & 8) !== 0;
+        // Controls take their colours from the window they sit in; a
+        // dialog on a black background writes in white, and drawing
+        // everything in black made Camelot's menu invisible on its own
+        // backdrop.
+        const pen = p.pen ?? 0, back = p.back ?? 15;
         if (type === 0 || type === 1) {
           const bottom = p.y + this.prop(o, 'nsBottom');
-          if (selected) this.screen.fill(x, y, x + w + 2, bottom + 2, 0);
-          this.screen.frame(x - 1, y - 1, x + w + 3, bottom + 3, 0);
-          if (font && text) this.screen.text(font, text, x + 1, y, selected ? 15 : 0);
+          // The frame sits one pixel outside the control's own
+          // rectangle.  Two pixels wider and it runs into the button
+          // below, which turned Camelot's three options into a block of
+          // white bars.
+          if (selected) this.screen.fill(x, y, x + w, bottom, pen);
+          this.screen.frame(x - 1, y - 1, x + w + 1, bottom + 1, pen);
+          if (font && text) this.screen.text(font, text, x + 1, y, selected ? back : pen);
         } else if (type === 3) {
-          this.drawEditField(o, x, y, w, font);
+          this.drawEditField(o, x, y, w, font, pen, back);
         } else if (font && text) {
-          this.drawText(font, text, x, y, 0, Math.max(8, w || (WIDTH - x)));
+          this.drawText(font, text, x, y, pen, Math.max(8, w || (WIDTH - x)));
         }
         return 0;
       }

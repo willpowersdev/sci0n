@@ -39,6 +39,24 @@ export class Screen {
    * one.  White with black text, as SCI0 draws it.
    */
   statusBar = new Uint8Array(WIDTH * STATUS_HEIGHT).fill(0xFF);
+  /**
+   * Rectangles the picture must not be painted back over.
+   *
+   * An open window sits above the picture, and the cast is drawn
+   * underneath it.  Restoring the whole picture each cycle -- which is
+   * this port's shortcut for SCI's per-sprite save and restore --
+   * scrubbed any window off the screen the moment anything animated.
+   * Camelot's opening menu was drawn and erased inside the same frame,
+   * leaving the black backdrop it had been drawn onto.
+   */
+  windows: Array<{ x0: number; y0: number; x1: number; y1: number }> = [];
+
+  /** Is this pixel underneath an open window? */
+  private covered(x: number, y: number): boolean {
+    for (const w of this.windows)
+      if (x >= w.x0 && x < w.x1 && y >= w.y0 && y < w.y1) return true;
+    return false;
+  }
   /** Set when the picture changes, so the host knows to repaint. */
   dirty = true;
   /** Undithering is a display choice, not a drawing one. */
@@ -55,8 +73,14 @@ export class Screen {
 
   /** Put the background back, ready for this frame's cast. */
   restore() {
-    this.visual.set(this.bgVisual);
     this.priority.set(this.bgPriority);
+    if (!this.windows.length) { this.visual.set(this.bgVisual); return; }
+    // Everything but what an open window is showing.
+    for (let y = 0; y < HEIGHT; y++) {
+      const row = y * WIDTH;
+      for (let x = 0; x < WIDTH; x++)
+        if (!this.covered(x, y)) this.visual[row + x] = this.bgVisual[row + x];
+    }
   }
 
   /** Bake a cel into the background, as AddToPic does. */
@@ -90,6 +114,8 @@ export class Screen {
         if (v === cel.key) continue;
         const i = py * WIDTH + px;
         if (priority < pri[i]) continue;
+        // A sprite is behind an open window, never over it.
+        if (vis === this.visual && this.covered(px, py)) continue;
         // A cel index is one colour; the pair byte keeps the renderer's
         // two paths identical for pictures and for sprites.
         vis[i] = v < 16 ? ((v << 4) | v) : v;
