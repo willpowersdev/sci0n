@@ -125,7 +125,7 @@ for (const name of ['SQ3', 'CAMELOT']) {
 
   checked++;
   if (!win) { failed++; console.log(`${name.padEnd(9)} typing opened no window at all`); continue; }
-  const [top, left, bottom, right] = win;
+  const [top, left, bottom, right] = win as number[];
   const w = right - left, h = bottom - top;
   // Only the horizontal geometry is judged.  That is where the fault
   // was, and it is the part whose convention is settled: the window's

@@ -16,7 +16,7 @@
  * than pretend.
  */
 import type { Game } from '../resources.ts';
-import { Script, SciObject, Index } from '../script.ts';
+import { Script, type SciObject, Index } from '../script.ts';
 import { decode } from '../disasm.ts';
 import { SpeciesTable } from './heap.ts';
 import { View, type Cel } from '../view.ts';
@@ -292,7 +292,8 @@ export class PMachine {
                         pen?: number; back?: number; style?: number }> =
     [{ x: 0, y: 0, w: WIDTH, h: HEIGHT }];
   private windows = new Map<number, {
-    rect: { x0: number; y0: number; w: number; h: number; buf: Uint8Array };
+    /** Null for a window that paints nothing, and so restores nothing. */
+    rect: { x0: number; y0: number; w: number; h: number; buf: Uint8Array } | null;
     port: { x: number; y: number; w: number; h: number };
     /** The screen's record of what the picture may not be drawn over. */
     area: { x0: number; y0: number; x1: number; y1: number };
@@ -742,8 +743,8 @@ export class PMachine {
           default:
             res.stopped = 'unimplemented'; res.detail = ins.name;
         }
-      } catch (e: any) {
-        res.stopped = 'error'; res.detail = e.message;
+      } catch (e) {
+        res.stopped = 'error'; res.detail = (e as Error).message;
       }
       if (yielded || res.stopped !== 'step-limit') break;
     }
@@ -1473,13 +1474,13 @@ export class PMachine {
       case 'DrawCel': {
         // DrawCel(view, loop, cel, x, y, priority)
         const v = this.view(a0);
-        if (!v || !v.loopCount) return 0;
+        if (!v?.loopCount) return 0;
         // The loop and cel are clamped, as SCI clamps them.  Camelot
         // asks for cel 2 of a loop with two cels when it draws the
         // bottom right corner of a message panel; refusing to draw
         // simply leaves that corner off.
         const loop = v.loops[Math.max(0, Math.min(v.loopCount - 1, a1))];
-        if (!loop || !loop.length) return 0;
+        if (!loop?.length) return 0;
         const cel = loop[Math.max(0, Math.min(loop.length - 1, args[2] ?? 0))];
         if (!cel) return 0;
         // A priority of -1 means none was given: the cel is drawn
@@ -1567,7 +1568,10 @@ export class PMachine {
           default: return 0;
         }
       }
-      case 'GetPort': case 'SetPort': return 0;
+      // `SetPort` has a real implementation further down; listing it
+      // here as a no-op shadowed it, because the first matching case
+      // wins and a script switching ports was quietly ignored.
+      case 'GetPort': return 0;
 
       // --- placement and movement --------------------------------------
       case 'BaseSetter': {
@@ -2466,7 +2470,7 @@ export class PMachine {
     const want = this.screen.undither ? this.screen.picEpoch + 1 : 0;
     if (e.view && e.stamp !== want) {
       const cels = e.view.loops.flat();
-      cels.forEach((c, i) => c.pixels.set(e!.plain[i]));
+      cels.forEach((c, i) => { c.pixels.set(e!.plain[i]); });
       if (this.screen.undither) {
         const hist = this.screen.backgroundHistogram();
         for (const c of cels) unditherCel(c, hist);
@@ -2533,7 +2537,7 @@ export class PMachine {
     const v = this.view(this.prop(o, 'view', -1));
     if (!v) return null;
     const loop = v.loops[this.prop(o, 'loop')] ?? v.loops[0];
-    if (!loop || !loop.length) return null;
+    if (!loop?.length) return null;
     return loop[Math.min(Math.max(0, this.prop(o, 'cel')), loop.length - 1)] ?? null;
   }
 

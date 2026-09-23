@@ -15,7 +15,7 @@
  * know *directly* may still be one it knows with a different ending:
  * vocab.901 lists those, so "rocks" is looked up again as "rock".
  */
-import { Game } from '../resources.ts';
+import type { Game } from '../resources.ts';
 import { gameWords, gameSuffixes } from '../vocab.ts';
 import { grammarRules, parseSentence, type Rule, type Word, type Parse } from './grammar.ts';
 import { parseSaid, saidMatches } from './said.ts';

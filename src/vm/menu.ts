@@ -18,8 +18,8 @@
  * the low byte the item, both counting from one, which is why a script
  * disables an item with `SetMenu($0503 smMENU_ENABLE 0)`.
  */
-import { Font } from '../font.ts';
-import { Screen, WIDTH, STATUS_HEIGHT } from './screen.ts';
+import type { Font } from '../font.ts';
+import { type Screen, WIDTH, STATUS_HEIGHT } from './screen.ts';
 
 export interface MenuItem {
   /** What is written on the left. */

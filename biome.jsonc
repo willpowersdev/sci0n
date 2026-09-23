@@ -1,0 +1,45 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
+  "files": { "includes": ["src/**/*.ts", "test/**/*.ts", "*.mjs"] },
+
+  // Formatting is left alone on purpose.  The source is laid out by
+  // hand -- aligned tables, wrapped prose in the comments -- and a
+  // formatter would reflow all of it into one enormous diff that buries
+  // the history without making anything clearer.
+  "formatter": { "enabled": false },
+
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "complexity": {
+        // The opcode, selector and kernel tables are written in hex on
+        // purpose: `0xF8` is the byte the format documents, and `248`
+        // would have to be translated back every time it is read.
+        "useSimpleNumberKeys": "off",
+        // The suites use a bare block to keep each section's locals to
+        // itself, which is what a block is for.
+        "noUselessLoneBlockStatements": "off"
+      },
+      "style": {
+        // `!` is used deliberately where the surrounding code has
+        // already established the value is there, and strict null
+        // checks are on to keep the rest honest.
+        "noNonNullAssertion": "off",
+        // Both are cosmetic, and the existing style is consistent.
+        "useTemplate": "off",
+        "useExponentiationOperator": "off",
+        "useImportType": "error"
+      }
+    }
+  },
+
+  "overrides": [
+    {
+      // The suites reach into the interpreter's internals on purpose --
+      // that is how they check what a screenshot cannot.
+      "includes": ["test/**/*.ts"],
+      "linter": { "rules": { "suspicious": { "noExplicitAny": "off" } } }
+    }
+  ]
+}

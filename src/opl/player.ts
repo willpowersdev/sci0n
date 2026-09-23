@@ -250,8 +250,15 @@ export class Player {
 }
 
 /** Nearest-neighbour resample from the chip rate to the output rate. */
-export function resample(src: Float32Array, from: number, to: number): Float32Array {
-  if (from === to) return src;
+/**
+ * The result is always its own buffer, never the caller's.
+ *
+ * Web Audio's `copyToChannel` wants a plain ArrayBuffer behind the
+ * array, and handing back the input would also alias whatever the
+ * caller is still filling.
+ */
+export function resample(src: Float32Array, from: number, to: number): Float32Array<ArrayBuffer> {
+  if (from === to) return Float32Array.from(src) as Float32Array<ArrayBuffer>;
   const n = Math.floor(src.length * to / from);
   const out = new Float32Array(n);
   for (let i = 0; i < n; i++) {

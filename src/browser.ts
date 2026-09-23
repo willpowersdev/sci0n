@@ -6,7 +6,7 @@
 import { Game, TYPE_NAMES, type ResourceSource } from './resources.ts';
 import { View, type Cel } from './view.ts';
 import { Picture, WIDTH, HEIGHT } from './pic.ts';
-import { EGA_RGB, BLENDED_RGB, ditherPixel } from './ega.ts';
+import { EGA_RGB, BLENDED_RGB } from './ega.ts';
 import { Script, Index, s16 } from './script.ts';
 import { sweep, mnemonic } from './disasm.ts';
 import { saidDecode, gameGroups, nameTable, stringTable, classTable,
@@ -870,8 +870,8 @@ function showVocab(num: number) {
     })).length;
     if (st.length && printable >= st.length * 0.6) {
       head('string table (no dedicated decoder)', st.length, 'strings');
-      st.forEach((t, i) => out.push(
-        `  <span class="c">${String(i).padStart(4)}</span>  <span class="s">${esc(t)}</span>`));
+      st.forEach((t, i) => { out.push(
+        `  <span class="c">${String(i).padStart(4)}</span>  <span class="s">${esc(t)}</span>`); });
       summary = `${st.length} strings`;
     } else {
       head('no decoder for this resource');
@@ -1166,7 +1166,7 @@ function showView(num: number) {
   };
   $('controls').innerHTML = '';
   const sel = document.createElement('select');
-  v.loops.forEach((l, i) => sel.add(new Option(`loop ${i} (${l.length} cels)`, String(i))));
+  v.loops.forEach((l, i) => { sel.add(new Option(`loop ${i} (${l.length} cels)`, String(i))); });
   sel.onchange = () => { loop = +sel.value; frame = 0; draw(); };
   const play = document.createElement('button');
   play.textContent = 'play';
@@ -1222,7 +1222,7 @@ function render() {
         : kind === 'sound' ? showSound(r.number)
         : notVisual();
       }
-      catch (e: any) { $('controls').innerHTML = `<span class="dim">decode failed: ${e.message}</span>`; }
+      catch (e) { $('controls').innerHTML = `<span class="dim">decode failed: ${(e as Error).message}</span>`; }
       render();
     };
     list.append(d);
@@ -1323,8 +1323,8 @@ for (const [name, type] of [['mousedown', EV.mouseDown], ['mouseup', EV.mouseUp]
   if (!files?.length) return;
   try {
     game = new Game(await sourceFromFiles(files));
-  } catch (err: any) {
-    $('gameinfo').textContent = 'not an SCI0 game folder: ' + err.message;
+  } catch (err) {
+    $('gameinfo').textContent = 'not an SCI0 game folder: ' + (err as Error).message;
     return;
   }
   adopt(game);
@@ -1337,8 +1337,8 @@ async function openGame(name: string) {
     adopt(new Game(await sourceFromServer(name)));
     document.title = `SCI0 Explorer — ${name}`;
     history.replaceState(null, '', `?game=${encodeURIComponent(name)}`);
-  } catch (err: any) {
-    $('gameinfo').textContent = `could not load ${name}: ${err.message}`;
+  } catch (err) {
+    $('gameinfo').textContent = `could not load ${name}: ${(err as Error).message}`;
   }
 }
 

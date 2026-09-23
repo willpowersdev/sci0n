@@ -10,7 +10,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { Game, type ResourceSource } from '../src/resources.ts';
-import { Font, Cursor, CURSOR_SIZE, CURSOR_CLEAR } from '../src/font.ts';
+import { Font, Cursor, CURSOR_CLEAR } from '../src/font.ts';
 
 import { ROOT } from './games.ts';
 const fx = JSON.parse(readFileSync('fixtures/font.json', 'utf8'));

@@ -17,8 +17,8 @@
  * from `TheMenuBar::handleEvent`, which is where mute and master volume
  * live.
  */
-import { Game } from '../resources.ts';
-import { Index, SciObject, Script } from '../script.ts';
+import type { Game } from '../resources.ts';
+import { type Index, SciObject, type Script } from '../script.ts';
 import { parseSound, type Sound } from '../sound.ts';
 import { parseBank, type Instrument } from '../opl/patch.ts';
 import { Player } from '../opl/player.ts';

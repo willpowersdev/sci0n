@@ -6,9 +6,9 @@
  * leaving the frame stack standing between them, which is what turns a
  * program that would block forever into something a browser can host.
  */
-import { Game } from '../resources.ts';
+import type { Game } from '../resources.ts';
 import { Index } from '../script.ts';
-import { PMachine, EV, type SciEvent } from './pmachine.ts';
+import { PMachine, EV } from './pmachine.ts';
 import { WIDTH, SCREEN_HEIGHT } from './screen.ts';
 
 export { WIDTH, SCREEN_HEIGHT };

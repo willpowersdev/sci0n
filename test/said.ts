@@ -51,7 +51,7 @@ for (const name of ['SQ3', 'CAMELOT']) {
   /** Compile a written pattern the way the script compiler would. */
   function spec(text: string): Uint8Array | null {
     const out: number[] = [];
-    for (const tok of text.match(/[a-z0-9'*!]+|[,&/()\[\]#<>]/g) ?? []) {
+    for (const tok of text.match(/[a-z0-9'*!]+|[,&/()[\]#<>]/g) ?? []) {
       if (OPS[tok] !== undefined) { out.push(OPS[tok]); continue; }
       const grp = tok === '*' ? 0xFFF : tok === '!*' ? 0xFFE : groups.get(tok);
       if (grp === undefined) return null;

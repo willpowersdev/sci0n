@@ -11,7 +11,9 @@
  * param, each taking exactly one variable-index operand.
  */
 
-const N = 0, B = 1, V = 2, S = 3;   // operand kinds
+// Operand kinds.  `N` is "none" -- unused by name, but the table reads
+// as a set and dropping it would leave the other three unexplained.
+const B = 1, V = 2, S = 3;
 
 const OPS: Record<number, [string | null, number[]]> = {
   0x00: ['bnot', []], 0x01: ['add', []], 0x02: ['sub', []], 0x03: ['mul', []],

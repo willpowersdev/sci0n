@@ -15,6 +15,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 const PORT = 8017, ORIGIN = `http://localhost:${PORT}`;
 const GAME = process.argv[2] ?? 'QFG2';
 
+/** What a DOM listener is, here: it is handed one event object. */
+type Listener = (ev?: any) => void;
 const reg = new Map<string, El>();
 /** Whatever last had `focus()` called on it. */
 let focused: El | null = null;
@@ -32,16 +34,19 @@ class El {
   // invisible otherwise: only printable characters travel through the
   // hidden field, so losing its focus leaves menus and arrows working
   // and kills nothing but typing.
-  listeners: Record<string, Function[]> = {};
-  addEventListener(t: string, fn: Function) { (this.listeners[t] ??= []).push(fn); }
-  removeEventListener(t: string, fn: Function) {
+  listeners: Record<string, Listener[]> = {};
+  addEventListener(t: string, fn: Listener) {
+    this.listeners[t] ??= [];
+    this.listeners[t].push(fn);
+  }
+  removeEventListener(t: string, fn: Listener) {
     this.listeners[t] = (this.listeners[t] ?? []).filter(f => f !== fn);
   }
   dispatch(t: string, ev: any = {}) { for (const fn of this.listeners[t] ?? []) fn({ target: this, ...ev }); }
   focus() { focused = this; }
   blur() { if (focused === this) focused = null; }
   getBoundingClientRect() { return { left: 0, top: 0, width: 960, height: 684 }; }
-  textContent = ''; className = ''; value = ''; hidden = false;
+  textContent = ''; className = ''; hidden = false;
   width = 0; height = 0;
   onclick: (() => void) | null = null; onchange: (() => void) | null = null;
   private _id: string | null = null;
@@ -89,16 +94,17 @@ g.document = {
   body: new El('body'),
 };
 /** The page's frame callback, so the loop can be stepped by hand. */
-let frameFn: Function | null = null;
-g.requestAnimationFrame = (fn: Function) => { frameFn = fn; return 1; };
+// Assigned from inside the rAF stub, which the checker cannot see.
+let frameFn: ((t?: number) => void) | undefined;
+g.requestAnimationFrame = (fn: (t?: number) => void) => { frameFn = fn; return 1; };
 g.cancelAnimationFrame = () => {};
 g.Option = class { text: string; value: string;
   constructor(t: string, v: string) { this.text = t; this.value = v; } };
-const winListeners: Record<string, Function[]> = {};
+const winListeners: Record<string, Listener[]> = {};
 g.window = {
   setInterval: () => 1, clearInterval: () => {},
-  addEventListener: (t: string, fn: Function) => { (winListeners[t] ??= []).push(fn); },
-  removeEventListener: (t: string, fn: Function) => {
+  addEventListener: (t: string, fn: Listener) => { winListeners[t] ??= []; winListeners[t].push(fn); },
+  removeEventListener: (t: string, fn: Listener) => {
     winListeners[t] = (winListeners[t] ?? []).filter(f => f !== fn);
   },
 };
@@ -136,7 +142,7 @@ if (!await serverUp()) {
 const bare = globalThis.fetch;
 g.fetch = (u: string, o?: any) => bare(u.startsWith('http') ? u : ORIGIN + u, o);
 
-await import('../dist/app.js');
+await import('../dist/app.js' as string);
 for (let i = 0; i < 60 && !reg.get('list')!.children.length; i++) await sleep(100);
 
 let failed = 0;

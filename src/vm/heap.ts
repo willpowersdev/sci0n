@@ -7,7 +7,7 @@
  * along it -- which is all `send` needs in order to mean anything.
  */
 import type { Game } from '../resources.ts';
-import { Script, SciObject, Index } from '../script.ts';
+import { Index, type SciObject } from '../script.ts';
 
 export const MAX_CHAIN = 32;   // damaged data can contain cycles
 

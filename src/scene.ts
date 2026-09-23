@@ -17,7 +17,7 @@
  * scenery instead of pasting them on top.
  */
 import type { Game } from './resources.ts';
-import { Script, SciObject, Index } from './script.ts';
+import { Script, type SciObject, type Index } from './script.ts';
 import { Picture, WIDTH, HEIGHT } from './pic.ts';
 import { View, type Cel } from './view.ts';
 import { EGA_RGB, BLENDED_RGB } from './ega.ts';
@@ -84,7 +84,7 @@ export class Scene {
   private propsOf(o: SciObject): Map<string, number> {
     const names = o.propertyNames(this.index);
     const m = new Map<string, number>();
-    names.forEach((n, i) => m.set(n, o.properties[i]));
+    names.forEach((n, i) => { m.set(n, o.properties[i]); });
     return m;
   }
 
@@ -125,7 +125,7 @@ export class Scene {
         for (const f of ['x', 'y', 'z', 'view', 'loop', 'cel', 'priority'] as const) {
           const val = ov[f];
           if (val === undefined) continue;
-          (sp as Record<string, unknown>)[f] =
+          (sp as unknown as Record<string, unknown>)[f] =
             (f === 'x' || f === 'y' || f === 'z') ? s16(val as number) : val;
           sp.fromInit.push(f);
         }

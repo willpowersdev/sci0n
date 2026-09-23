@@ -29,7 +29,7 @@ export function collect(game: Game, index: Index): Map<number, Room> {
     for (const o of s.objects) {
       const names = o.propertyNames(index);
       const d = new Map<string, number>();
-      names.forEach((n, i) => d.set(n, o.properties[i]));
+      names.forEach((n, i) => { d.set(n, o.properties[i]); });
       if (!d.has('picture') || o.name.startsWith('<anon')) continue;
       const exits = new Map<Dir, number>();
       for (const k of DIRS) {

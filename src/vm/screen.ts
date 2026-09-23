@@ -11,12 +11,12 @@
  * already there, which is what beds an actor into the scenery instead of
  * pasting it on top.
  */
-import { Picture, WIDTH, HEIGHT } from '../pic.ts';
+import { type Picture, WIDTH, HEIGHT } from '../pic.ts';
 import type { Cel } from '../view.ts';
 import type { Font } from '../font.ts';
 import { EGA_RGB, BLENDED_RGB, ditherPixel } from '../ega.ts';
 import { histogram } from '../undither.ts';
-import { Cursor, CURSOR_SIZE, CURSOR_CLEAR } from '../font.ts';
+import { type Cursor, CURSOR_SIZE, CURSOR_CLEAR } from '../font.ts';
 
 export { WIDTH, HEIGHT };
 /** The status line sits above the picture; SCI0 reserves ten rows. */

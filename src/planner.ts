@@ -176,7 +176,7 @@ export function plan(models: Map<number, Room>, start: number, goal: number,
     }
     if (result.states > maxStates) break;
     const flags = new Map<string, number | null>();
-    tracked.forEach((g, i) => flags.set(g, vals[i]));
+    tracked.forEach((g, i) => { flags.set(g, vals[i]); });
 
     for (const dest of exits.get(room) ?? []) {
       const nk = key(dest, vals);

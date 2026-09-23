@@ -20,7 +20,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Game, type ResourceSource } from '../src/resources.ts';
 import { Index } from '../src/script.ts';
-import { Session } from '../src/vm/session.ts';
+import { Session, type SessionStatus } from '../src/vm/session.ts';
 import { EV } from '../src/vm/pmachine.ts';
 import { WIDTH, HEIGHT } from '../src/vm/screen.ts';
 import { ROOT } from './games.ts';
@@ -86,7 +86,7 @@ let clock = 0;
 s.now = () => clock;
 const step = () => { clock += 1000 / 60; return s.tick(); };
 /** Run until a window opens, which is the menu appearing. */
-function toMenu(sess: Session, run: () => { running: boolean; picture: number }) {
+function toMenu(sess: Session, run: () => SessionStatus) {
   let last = sess.tick();
   for (let i = 0; i < TO_MENU && last.running; i++) {
     last = run();

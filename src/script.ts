@@ -26,7 +26,7 @@
  *
  * Those last two are parallel arrays, NOT interleaved pairs.
  */
-import { Game } from './resources.ts';
+import type { Game } from './resources.ts';
 import { nameTable, classTable, SELECTORS, KERNEL_NAMES, CLASS_TABLE } from './vocab.ts';
 
 export const BLOCK_NAMES: Record<number, string> = {

@@ -109,7 +109,7 @@ export class InitAnalysis {
     const stack: Slot[] = [];
     let acc: Slot = null;
     const pos = new Map<number, number>();
-    all.forEach((i, n) => pos.set(i.pc, n));
+    all.forEach((i, n) => { pos.set(i.pc, n); });
 
     for (const cur of body) {
       const at = pos.get(cur.pc)!;

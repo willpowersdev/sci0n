@@ -29,7 +29,7 @@
  * so treat it as a map of what is *possible* per room, not a guarantee of
  * what will work.
  */
-import { Script, SciObject, Index } from './script.ts';
+import { Script, type SciObject, Index } from './script.ts';
 import { sweep, type Instruction } from './disasm.ts';
 import { gameGroups, saidDecode } from './vocab.ts';
 import { strings as textStrings } from './text.ts';

@@ -107,7 +107,7 @@ let boat: { loop: number; solid: number; noTurn: boolean } | null = null;
   const vm = s.vm as any;
   for (const v of vm.listValues(vm.cast)) {
     const o = vm.resolveTarget(null, v);
-    if (!o || o.name !== 'boat') continue;
+    if (o?.name !== 'boat') continue;
     const cel = vm.celOf(o);
     if (!cel) continue;
     let opaque = 0;

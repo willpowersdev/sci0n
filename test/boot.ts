@@ -6,8 +6,8 @@
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { Game, type ResourceSource } from '../src/resources.ts';
-import { Script, Index } from '../src/script.ts';
+import { Game } from '../src/resources.ts';
+import { Index } from '../src/script.ts';
 import { PMachine } from '../src/vm/pmachine.ts';
 
 import { ROOT } from './games.ts';
@@ -17,7 +17,6 @@ for (const name of process.argv.slice(2).length ? process.argv.slice(2) : ['SQ3'
   const g = new Game({ names: () => files, read: (n) => new Uint8Array(readFileSync(join(dir, n))) });
   const idx = new Index(g);
   const vm = new PMachine(g, idx);
-  const s0 = new Script(g.data(2, 0), 0);
 
   // Export 0 of script 0 is the game object by convention.
   const ref = vm.scriptID(0, 0);
