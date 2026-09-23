@@ -45,7 +45,10 @@ function nodeSource(dir: string): ResourceSource {
 /**
  * Is `text` drawn anywhere on screen, in either ink?
  *
- * A highlighted button is drawn inverted, so both polarities count.
+ * A highlighted button is drawn inverted, so both polarities count --
+ * but the glyphs have to be legible either way.  Matching only the set
+ * pixels accepts a flat slab of one colour as every word in the dialog,
+ * so the gaps between the strokes must be the other ink.
  */
 function onScreen(s: Session, text: string): boolean {
   const font = (s.vm as any).font(0);
@@ -57,20 +60,20 @@ function onScreen(s: Session, text: string): boolean {
   for (let y = 0; y + h < HEIGHT; y++) {
     for (let x = 0; x < WIDTH; x++) {
       for (const dark of [true, false]) {
-        let cx = x, all = true;
+        let cx = x, all = true, contrast = 0;
         for (const g of glyphs) {
           for (let gy = 0; gy < g.height && all; gy++)
             for (let gx = 0; gx < g.width && all; gx++) {
-              if (!g.bits[gy * g.width + gx]) continue;
               const px = cx + gx, py = y + gy;
               if (px >= WIDTH || py >= HEIGHT) { all = false; break; }
               const ink = (vis[py * WIDTH + px] & 0x0F) === 0;
-              if (ink !== dark) all = false;
+              if (g.bits[gy * g.width + gx]) { if (ink !== dark) all = false; }
+              else if (ink !== dark) contrast++;
             }
           cx += g.width;
           if (!all) break;
         }
-        if (all) return true;
+        if (all && contrast > 0) return true;
       }
     }
   }

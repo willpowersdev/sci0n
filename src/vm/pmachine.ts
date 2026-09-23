@@ -1843,11 +1843,17 @@ export class PMachine {
         const pen = p.pen ?? 0, back = p.back ?? 15;
         if (type === 0 || type === 1) {
           const bottom = p.y + this.prop(o, 'nsBottom');
+          // Erase before drawing, whichever state it is in.  A button
+          // is redrawn as the highlight moves off it, and filling only
+          // when selected left the inverted block behind: the option
+          // stayed a solid white slab with white text on it and its
+          // frame lost in the fill.
+          //
           // The frame sits one pixel outside the control's own
           // rectangle.  Two pixels wider and it runs into the button
           // below, which turned Camelot's three options into a block of
           // white bars.
-          if (selected) this.screen.fill(x, y, x + w, bottom, pen);
+          this.screen.fill(x - 1, y - 1, x + w + 1, bottom + 1, selected ? pen : back);
           this.screen.frame(x - 1, y - 1, x + w + 1, bottom + 1, pen);
           if (font && text) this.screen.text(font, text, x + 1, y, selected ? back : pen);
         } else if (type === 3) {
