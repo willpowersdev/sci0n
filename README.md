@@ -104,6 +104,13 @@ text. That catches porting errors, but it cannot catch a mistake both sides shar
   word group. The wildcard `*` is group `0x0FFF`, so every pattern using it was cut
   in two and 486 patterns across the eight games were nonsense. Both digests agreed;
   what showed it was typing "get purse" in a room that would not answer.
+- **Lines were drawn with a textbook Bresenham.** Sierra's differs by a pixel here and
+  there, which sounds cosmetic and is not: a picture is outlines and then flood fills,
+  so a line that rounds the other way leaves a hole and the fill behind it pours
+  through. Camelot's credit screen came out pink from edge to edge because the fill
+  meant for the king's hand escaped along a one-pixel gap. 756 of 794 pictures changed
+  when it was corrected, and agreement with a screenshot of the real thing went from
+  13% to 76%.
 
 Both were found by looking at the output, and both are now covered by checks that
 do not depend on the reference agreeing:
@@ -113,6 +120,9 @@ do not depend on the reference agreeing:
 - Every word group a said pattern names must be one the vocabulary has, and the
   wildcard must actually turn up — a decoder that quietly drops what it cannot read
   satisfies one of those but not both.
+- Camelot's credit screen paints the king's hand and its background with two separate
+  fills, so those two areas must end up two different colours. That is a fact about the
+  picture rather than about whichever implementation hashed it first.
 - The GIF encoder is checked by decoding its own output back to the exact pixels with
   an independently written reader, including a case large enough to fill the LZW
   dictionary and force a table reset.

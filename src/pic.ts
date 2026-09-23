@@ -109,16 +109,57 @@ export class Picture {
     return out;
   }
 
+  /**
+   * A line the way the original drew one, which is not the textbook
+   * Bresenham.
+   *
+   * The two agree about the endpoints and disagree about a pixel here
+   * and there in between, and in a vector picture that is not
+   * cosmetic.  Every filled area is bounded by the lines drawn before
+   * it, so a line that rounds the other way at a single step leaves a
+   * one-pixel hole, and the fill behind it pours through: a colour
+   * meant for the king's hand ends up covering the sky instead.  Four
+   * out of five pictures look fine either way, which is what makes it
+   * such a quiet fault.
+   *
+   * Three things make it different.  A run that is purely horizontal
+   * or vertical is drawn as a run, not stepped.  A sloped line puts
+   * down both of its endpoints before it starts, so the ends are
+   * exact whatever the arithmetic does.  And it works in doubled
+   * deltas, stepping the minor axis *before* the major one and
+   * recording the pixel only once both have moved -- where the
+   * textbook version records first and steps afterwards, and may step
+   * both axes at once.
+   */
   private line(x1: number, y1: number, x2: number, y2: number) {
-    const dx = Math.abs(x2 - x1), dy = Math.abs(y2 - y1);
-    const sx = x1 < x2 ? 1 : -1, sy = y1 < y2 ? 1 : -1;
-    let err = dx - dy;
-    for (;;) {
-      this.put(x1, y1);
-      if (x1 === x2 && y1 === y2) break;
-      const e2 = err * 2;
-      if (e2 > -dy) { err -= dy; x1 += sx; }
-      if (e2 < dx) { err += dx; y1 += sy; }
+    if (y1 === y2) {
+      const from = Math.min(x1, x2), to = Math.max(x1, x2);
+      for (let x = from; x <= to; x++) this.put(x, y1);
+      return;
+    }
+    if (x1 === x2) {
+      const from = Math.min(y1, y2), to = Math.max(y1, y2);
+      for (let y = from; y <= to; y++) this.put(x1, y);
+      return;
+    }
+    const stepX = x2 < x1 ? -1 : 1, stepY = y2 < y1 ? -1 : 1;
+    const dx = Math.abs(x2 - x1) * 2, dy = Math.abs(y2 - y1) * 2;
+    this.put(x1, y1);
+    this.put(x2, y2);
+    if (dx > dy) {
+      let err = dy - (dx >> 1);
+      while (x1 !== x2) {
+        if (err >= 0) { y1 += stepY; err -= dx; }
+        x1 += stepX; err += dy;
+        this.put(x1, y1);
+      }
+    } else {
+      let err = dx - (dy >> 1);
+      while (y1 !== y2) {
+        if (err >= 0) { x1 += stepX; err -= dy; }
+        y1 += stepY; err += dx;
+        this.put(x1, y1);
+      }
     }
   }
 

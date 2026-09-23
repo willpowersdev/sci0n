@@ -2,7 +2,7 @@
  "CAMELOT": {
   "aa_pic": 0,
   "cels": 975,
-  "hist_digest": "0405c785a7bd7c84",
+  "hist_digest": "0203bc5cb8e941bb",
   "merged": 9,
   "mlaa_digest": "e625a4873bb418dd",
   "pics": [
@@ -22,9 +22,9 @@
  "COLONEL": {
   "aa_pic": 1,
   "cels": 1022,
-  "hist_digest": "d983b32c669c7a46",
+  "hist_digest": "793ad440205776b9",
   "merged": 0,
-  "mlaa_digest": "f0df2c60662b1c31",
+  "mlaa_digest": "cd5a0259fb5c91fe",
   "pics": [
    1,
    2,
@@ -42,9 +42,9 @@
  "HERO": {
   "aa_pic": 10,
   "cels": 1093,
-  "hist_digest": "a2a3dc2189d537c9",
+  "hist_digest": "9743a8462b4102f5",
   "merged": 50,
-  "mlaa_digest": "d1afb799b4e1e1fe",
+  "mlaa_digest": "e8fa6e5d11053f66",
   "pics": [
    10,
    13,
@@ -62,9 +62,9 @@
  "ICE": {
   "aa_pic": 1,
   "cels": 985,
-  "hist_digest": "a1e1e97857c3e6e3",
+  "hist_digest": "1d2ef1a86462720c",
   "merged": 105,
-  "mlaa_digest": "ba5282cc5fc4a3ec",
+  "mlaa_digest": "452b1b4a1db403a3",
   "pics": [
    1,
    2,
@@ -82,9 +82,9 @@
  "KQ4": {
   "aa_pic": 1,
   "cels": 743,
-  "hist_digest": "dd0f02a353d16d4b",
+  "hist_digest": "da8b5417840d81a0",
   "merged": 0,
-  "mlaa_digest": "4fa708caa37f40e0",
+  "mlaa_digest": "9b23be4a148375b6",
   "pics": [
    1,
    2,
@@ -102,9 +102,9 @@
  "LSL2": {
   "aa_pic": 10,
   "cels": 212,
-  "hist_digest": "38f484460acf2f17",
-  "merged": 1,
-  "mlaa_digest": "c5067faf84222cdb",
+  "hist_digest": "90dd68925e2c9663",
+  "merged": 0,
+  "mlaa_digest": "e44aa4f03be2d689",
   "pics": [
    10,
    11,
@@ -117,12 +117,12 @@
    18,
    19
   ],
-  "undither_digest": "9973953dd2cab3a8"
+  "undither_digest": "801243babbd1a284"
  },
  "QFG2": {
   "aa_pic": 1,
   "cels": 1077,
-  "hist_digest": "9ca81001d7eb8f00",
+  "hist_digest": "f77480d506a02db0",
   "merged": 1,
   "mlaa_digest": "b9ebe96e0456b00c",
   "pics": [
@@ -142,9 +142,9 @@
  "SQ3": {
   "aa_pic": 1,
   "cels": 603,
-  "hist_digest": "5520ebbb25314b35",
+  "hist_digest": "b598a5a0411a0f26",
   "merged": 8,
-  "mlaa_digest": "15980b68c8703d70",
+  "mlaa_digest": "6bda3009932b9ee0",
   "pics": [
    1,
    2,

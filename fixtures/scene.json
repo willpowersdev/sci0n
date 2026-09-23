@@ -1,6 +1,6 @@
 {
  "CAMELOT": {
-  "digest": "8182ffd11fc2418d",
+  "digest": "47ca41733aab7595",
   "placed": 243,
   "rooms": 89,
   "sends": 1167,
@@ -8,7 +8,7 @@
   "unresolved": 578
  },
  "COLONEL": {
-  "digest": "b081c89d227c15d7",
+  "digest": "a80d4ae034911929",
   "placed": 687,
   "rooms": 98,
   "sends": 1488,
@@ -16,7 +16,7 @@
   "unresolved": 425
  },
  "HERO": {
-  "digest": "05b396cdd22f7e37",
+  "digest": "f73de5b562f7bc49",
   "placed": 463,
   "rooms": 118,
   "sends": 1816,
@@ -24,7 +24,7 @@
   "unresolved": 1001
  },
  "ICE": {
-  "digest": "304ce67fef249b12",
+  "digest": "a292e1017f8bc87d",
   "placed": 462,
   "rooms": 88,
   "sends": 1186,
@@ -32,7 +32,7 @@
   "unresolved": 555
  },
  "KQ4": {
-  "digest": "5104cfc183272ceb",
+  "digest": "f6e1fec54ac57555",
   "placed": 0,
   "rooms": 103,
   "sends": 2178,
@@ -40,7 +40,7 @@
   "unresolved": 1875
  },
  "LSL2": {
-  "digest": "9f337e3a8ab04932",
+  "digest": "6ba8cb394a23e3b1",
   "placed": 20,
   "rooms": 89,
   "sends": 1870,
@@ -48,7 +48,7 @@
   "unresolved": 1577
  },
  "QFG2": {
-  "digest": "5ce3276bc25959b1",
+  "digest": "3fd5b9a50e7910de",
   "placed": 808,
   "rooms": 92,
   "sends": 958,
@@ -56,7 +56,7 @@
   "unresolved": 276
  },
  "SQ3": {
-  "digest": "23b9dc2bf2ad0b30",
+  "digest": "34f576e3a9dc7754",
   "placed": 26,
   "rooms": 77,
   "sends": 1091,
