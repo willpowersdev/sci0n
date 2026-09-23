@@ -90,6 +90,16 @@ const MAX_FRAMES = 1024;
  * alone".  Everything without it follows its y down the screen.
  */
 export const SIGNAL_FIXED_PRIORITY = 0x10;
+/**
+ * `noTurn`: this object does not face the way it is going.
+ *
+ * A mover calls `DirLoop` to turn an actor towards its heading, which
+ * is right for someone walking and wrong for anything whose loops are
+ * not compass directions.  Camelot's intro sails a boat across the
+ * water with an animation in loop 0 and the boat itself elsewhere, and
+ * `DirLoop` was overwriting the loop the script had chosen.
+ */
+export const SIGNAL_NO_TURN = 0x800;
 
 /**
  * Window styles, as the games pass them to `NewWindow`.
@@ -2208,6 +2218,9 @@ export class PMachine {
       case 'DirLoop': {
         const o = this.resolveTarget(null, a0);
         if (!o) return 0;
+        // An object that does not turn keeps the loop the script gave
+        // it, whichever way the mover is taking it.
+        if (this.prop(o, 'signal') & SIGNAL_NO_TURN) return 0;
         const angle = ((s16(u16(a1)) % 360) + 360) % 360;
         // Early SCI0 used a narrower arc for front and back; the later
         // interpreter widened both to a full quadrant.

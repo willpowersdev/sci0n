@@ -86,6 +86,51 @@ checked++;
 if (!sawLine) failed++;
 console.log(`  "${LINE}" ${sawLine ? 'is drawn over its scene' : 'IS NOT ON THE SCREEN'}`);
 
+/**
+ * The boat that sails across the harbour scene.
+ *
+ * `MoveTo` turns an actor to face where it is going by calling
+ * `DirLoop`, which is right for someone walking and wrong for a boat:
+ * view 601's loop 0 is the shimmer of light on the water and loop 2 is
+ * the boat itself, so turning it "east" replaced the boat with its own
+ * reflection.  The script says so -- the boat carries `noTurn` -- and
+ * `DirLoop` was ignoring it.
+ *
+ * Both halves are checked, because the loop number alone would still
+ * pass if the art moved: the boat's cels are a quarter solid where the
+ * shimmer's are a twentieth, so the opaque fraction says which one is
+ * really on screen.
+ */
+const NO_TURN = 0x800;
+let boat: { loop: number; solid: number; noTurn: boolean } | null = null;
+{
+  const vm = s.vm as any;
+  for (const v of vm.listValues(vm.cast)) {
+    const o = vm.resolveTarget(null, v);
+    if (!o || o.name !== 'boat') continue;
+    const cel = vm.celOf(o);
+    if (!cel) continue;
+    let opaque = 0;
+    for (const p of cel.pixels) if (p !== cel.key) opaque++;
+    boat = {
+      loop: vm.prop(o, 'loop'),
+      solid: opaque / (cel.width * cel.height),
+      noTurn: !!(vm.prop(o, 'signal') & NO_TURN),
+    };
+  }
+}
+if (!boat) {
+  console.log('  (the harbour scene had gone by; no boat to check)');
+} else {
+  checked++;
+  // A fifth solid is comfortably above the shimmer and below the boat.
+  const ok = boat.noTurn && boat.loop !== 0 && boat.solid > 0.15;
+  if (!ok) failed++;
+  console.log(`  the boat keeps loop ${boat.loop}, ${Math.round(boat.solid * 100)}% solid` +
+    ` (noTurn ${boat.noTurn ? 'set' : 'CLEAR'})` +
+    `${ok ? '' : ' -- DirLoop TURNED IT INTO THE WATER SHIMMER'}`);
+}
+
 console.log(`\n${checked - failed}/${checked} intro checks passed`);
 process.exit(failed ? 1 : 0);
 
