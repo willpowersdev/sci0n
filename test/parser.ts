@@ -25,6 +25,15 @@
  * line; Camelot puts a menu bar in the same strip and never calls
  * `DrawStatus` at all, so its strip is the menu bar's -- see
  * test/menubar.ts.
+ *
+ * What is typed has to stay inside the field as well.  `max` is not the
+ * whole of the limit and never was: `DEdit::setSize` asks how wide "M"
+ * is and lays out three quarters of `max` of them, on the assumption
+ * that words average narrower than the widest letter.  For Camelot that
+ * is a field 270 pixels wide holding a string `max` allows to reach 360,
+ * so a line of capitals ran 90 pixels out of the box and across the
+ * picture.  SCI refuses a character on width as well as on count, and
+ * so the check below types the worst case rather than an average one.
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -95,7 +104,7 @@ for (const name of ['SQ3', 'CAMELOT']) {
   const newWindow = idx.kernel.indexOf('NewWindow');
   const drawControl = idx.kernel.indexOf('DrawControl');
   let win: number[] | null = null;
-  const fields: Array<{ name: string; left: number; right: number }> = [];
+  const fields: Array<{ name: string; left: number; right: number; max: number; obj: any }> = [];
   const kernel = vm.kernel.bind(vm);
   vm.kernel = (id: number, a: number[], f: any) => {
     if (id === newWindow && !win) win = a.slice(0, 4);
@@ -104,7 +113,8 @@ for (const name of ['SQ3', 'CAMELOT']) {
       // `max` is how many characters the field holds; only an editable
       // one has it, and only that one has to be wide enough to type in.
       if (o && vm.prop(o, 'max') > 0)
-        fields.push({ name: o.def.name, left: vm.prop(o, 'nsLeft'), right: vm.prop(o, 'nsRight') });
+        fields.push({ name: o.def.name, left: vm.prop(o, 'nsLeft'),
+                      right: vm.prop(o, 'nsRight'), max: vm.prop(o, 'max'), obj: o });
     }
     return kernel(id, a, f);
   };
@@ -159,6 +169,72 @@ for (const name of ['SQ3', 'CAMELOT']) {
   const shown = drawnText(s, PHRASE, left, top, right, bottom);
   if (!shown) failed++;
   console.log(`          "${PHRASE}" ${shown ? 'is drawn in the window' : 'IS NOT ON THE SCREEN'}`);
+
+  /**
+   * The worst case: as many of the widest letter as `max` allows.
+   *
+   * Judged on the pixels, not on the string -- the question is whether
+   * anything was drawn outside the box, and a field that holds the text
+   * but paints it past its own edge would satisfy a length check.
+   */
+  for (let i = 0; i < 80; i++) { s.key(0x08); for (let k = 0; k < 2; k++) st = step(); }
+  for (let i = 0; i < SETTLE && st.running; i++) st = step();
+  /**
+   * What the ground outside the window looks like with the field empty.
+   *
+   * Counting dark pixels there outright counts the picture as well --
+   * it is a game, and games have black in them.  What matters is
+   * whether typing changes any of it.
+   */
+  const beyond = right + 2;
+  const sample = () => {
+    const out: number[] = [];
+    for (let y = Math.max(0, top); y < Math.min(190, bottom); y++)
+      for (let x = Math.max(0, beyond); x < WIDTH; x++) out.push(s.screen.visual[y * WIDTH + x]);
+    return out;
+  };
+  const clean = sample();
+  for (let i = 0; i < 60; i++) { s.key('M'.charCodeAt(0)); for (let k = 0; k < 2; k++) st = step(); }
+  for (let i = 0; i < SETTLE && st.running; i++) st = step();
+  if (field) {
+    checked++;
+    /**
+     * Nothing the input line draws may land outside its window.
+     *
+     * The strip between the field and the window's own border is only
+     * a few pixels wide and the border is drawn in the same ink, so
+     * the ground worth watching is past the window altogether: text
+     * that does not fit runs on across the picture, and a field 270
+     * pixels wide holding 360 pixels of capitals put 90 of them there.
+     */
+    const fl = left + field.left, fr = left + field.right;
+    const dirty = sample();
+    let outside = 0;
+    for (let i = 0; i < clean.length; i++) if (clean[i] !== dirty[i]) outside++;
+    const ok = outside === 0;
+    if (!ok) failed++;
+    // What the worst case costs: `max` of the widest letter, against
+    // the room the field was actually given.
+    const worst = field.max * (8);
+    console.log(`          max ${field.max} capitals would be ~${worst}px in a ${fr - fl}px field:` +
+      ` ${outside} pixels beyond the window changed` +
+      `${ok ? '' : ' -- TEXT RUNS OUT OF THE BOX'}`);
+
+    /**
+     * And the plain question, which does not depend on where the
+     * window happens to sit: is what the field is holding narrower
+     * than the field?
+     */
+    checked++;
+    const fnt = vm.font(vm.prop(field.obj, 'font')) ?? vm.font(0);
+    const held = vm.strings.get(vm.prop(field.obj, 'text')) ?? '';
+    let drawn = 0;
+    for (const c of held) drawn += fnt?.chars[c.charCodeAt(0)]?.width ?? 0;
+    const fits = drawn < fr - fl;
+    if (!fits) failed++;
+    console.log(`          it accepted ${held.length} of them, ${drawn}px wide` +
+      `${fits ? '' : ` -- WIDER THAN THE ${fr - fl}px FIELD`}`);
+  }
 
   // The status line: text the game set, and pixels to show for it.
   const bar = s.screen.statusBar;

@@ -903,6 +903,34 @@ export class PMachine {
    * A control's rectangle is relative to the window it belongs to, so
    * the same offset the drawing path applies has to be applied here.
    */
+  /**
+   * Would the field still hold its text with one more character in it?
+   *
+   * `max` is not the whole of the limit.  SCI refuses a character on
+   * width as well as on count: it measures the text with the new
+   * character added and drops it if that reaches the control's
+   * rectangle.  Both tests are needed because the box is not sized for
+   * the worst case -- `DEdit::setSize` asks `TextSize` how wide "M" is
+   * and then takes three quarters of `max` of them, on the assumption
+   * that ordinary words average narrower than the widest letter.  For
+   * Camelot's parser that is 8 pixels by 45 characters by 3/4, a field
+   * 270 pixels wide holding a string that could be 360 pixels long, so
+   * the count alone never stops anything and what is typed runs out of
+   * the box and across the picture.
+   *
+   * Measured from the whole string rather than from the part before the
+   * caret, which is what decides whether it all fits.
+   */
+  private fitsInField(o: RtObject, text: string, key: number): boolean {
+    const fnt = this.font(this.prop(o, 'font')) ?? this.font(0);
+    if (!fnt) return true;
+    const width = s16(u16(this.prop(o, 'nsRight'))) - s16(u16(this.prop(o, 'nsLeft')));
+    if (width <= 0) return true;
+    let w = fnt.chars[key]?.width ?? 0;
+    for (const c of text) w += fnt.chars[c.charCodeAt(0)]?.width ?? 0;
+    return w < width;
+  }
+
   private redrawControl(o: RtObject) {
     const p = this.port;
     const x = p.x + this.prop(o, 'nsLeft');
@@ -2106,7 +2134,7 @@ export class PMachine {
         else if (key === 0x4F00) { cur = text.length; }            // end
         else if (key === 0x5300) { text = text.slice(0, cur) + text.slice(cur + 1); }
         else if (key >= 32 && key < 256) {
-          if (text.length < max) {
+          if (text.length < max && this.fitsInField(ctl, text, key)) {
             text = text.slice(0, cur) + String.fromCharCode(key) + text.slice(cur);
             cur++;
           }
