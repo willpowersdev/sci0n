@@ -812,17 +812,31 @@ export class PMachine {
    * The caret goes where the cursor actually is rather than always at
    * the end, so moving through the line with the arrow keys shows.
    */
+  /**
+   * An edit field: a box, what has been typed, and the caret.
+   *
+   * SCI draws it as a rectangle one pixel outside the control's own,
+   * erased and then framed, with the text inset by two -- so the field
+   * you type into is visibly a field, rather than words loose on the
+   * window.  The caret goes where the cursor actually is rather than
+   * always at the end, so moving along the line with the arrow keys
+   * shows.
+   */
   private drawEditField(o: RtObject, x: number, y: number, w: number,
                         font: Font | null, pen = 0, back = 15) {
     if (!font) return;
     const text = this.stringAt(this.prop(o, 'text'), o.scriptNo);
     const h = Math.max(8, font.lineHeight);
-    // Clear first: the field is redrawn on every keystroke, and text
-    // left behind shows through wherever the new line is shorter.
-    if (w > 0) this.screen.fill(x, y, x + w, y + h, back);
-    this.screen.text(font, text, x, y, pen);
+    if (w <= 0) return;
+    // Erase and frame the box.  It is redrawn on every keystroke, and
+    // text left behind would show through wherever the new line is
+    // shorter than the old.
+    this.screen.fill(x - 1, y - 1, x + w + 1, y + h + 1, back);
+    this.screen.frame(x - 1, y - 1, x + w + 1, y + h + 1, pen);
+    const tx = x + 1;
+    this.screen.text(font, text, tx, y, pen);
     const cur = Math.max(0, Math.min(text.length, this.prop(o, 'cursor', text.length)));
-    let cx = x;
+    let cx = tx;
     for (let i = 0; i < cur; i++) cx += font.chars[text.charCodeAt(i)]?.width ?? 0;
     this.screen.fill(cx, y, cx + 1, y + h, pen);
   }
@@ -1210,7 +1224,7 @@ export class PMachine {
    */
   private drawCast(castH: number) {
     this.showPendingPic();
-    this.screen.restore();
+    this.screen.restoreCastAreas();
     const drawn: Array<{ o: RtObject; cel: Cel; left: number; top: number;
                         pri: number; y: number; z: number; order: number }> = [];
     let order = 0;
@@ -1251,7 +1265,11 @@ export class PMachine {
     drawn.sort((a, b) => (a.y - b.y) || (a.z - b.z) || (a.order - b.order));
     // Each cel writes its priority as well as testing against it, so a
     // member drawn later cannot paint over one that is nearer the front.
-    for (const d of drawn) this.screen.drawCel(d.cel, d.left, d.top, d.pri, true);
+    for (const d of drawn) {
+      this.screen.drawCel(d.cel, d.left, d.top, d.pri, true, true);
+      // Remembered so the picture can be put back under it next cycle.
+      this.screen.castCovered(d.left, d.top, d.left + d.cel.width, d.top + d.cel.height);
+    }
     this.animateStats.drawn += drawn.length;
   }
 
@@ -1399,7 +1417,12 @@ export class PMachine {
         const cels = v?.loops[a1];
         const cel = cels?.[args[2] ?? 0];
         if (!cel) return 0;
-        this.screen.drawCel(cel, args[3] ?? 0, args[4] ?? 0, args[5] ?? 15);
+        // A priority of -1 means none was given: the cel is drawn
+        // whatever the picture says.  Taking it as the lowest priority
+        // instead skipped every pixel, which is why the ornament around
+        // Camelot's message panels never appeared.
+        const pri = s16(u16(args[5] ?? 15));
+        this.screen.drawCel(cel, args[3] ?? 0, args[4] ?? 0, pri < 0 ? 15 : pri);
         return 0;
       }
       case 'AddToPic': {
@@ -1446,8 +1469,7 @@ export class PMachine {
         switch (a0) {
           case 2: return 16;                       // grGET_COLOURS
           case 4: {                                // grDRAW_LINE
-            const colour = args[5] ?? 0;
-            this.screen.line(x1, y1, x2, y2, colour & 0x0F);
+            this.screen.line(x1, y1, x2, y2, args[5] ?? 0);
             return 0;
           }
           case 7: {                                // grSAVE_BOX

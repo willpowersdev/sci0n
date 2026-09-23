@@ -169,6 +169,39 @@ export class Screen {
   }
 
   /** Put the background back, ready for this frame's cast. */
+  /**
+   * Rectangles the cast covered last cycle.
+   *
+   * SCI puts the picture back only where its sprites were, each one
+   * saving and restoring the pixels under itself.  This port used to
+   * repaint the whole picture instead, which erased everything else
+   * drawn on top of it -- a window's own ornament, text written over
+   * the scene -- and needed a growing list of exceptions to stop it.
+   * Restoring only what was covered removes the problem rather than
+   * working around it.
+   */
+  private lastDrawn: Array<{ x0: number; y0: number; x1: number; y1: number }> = [];
+
+  /** Put the picture back under whatever the cast covered last cycle. */
+  restoreCastAreas() {
+    this.epoch++;
+    this.priority.set(this.bgPriority);
+    for (const r of this.lastDrawn) {
+      for (let y = Math.max(0, r.y0); y < Math.min(HEIGHT, r.y1); y++) {
+        const row = y * WIDTH;
+        for (let x = Math.max(0, r.x0); x < Math.min(WIDTH, r.x1); x++)
+          this.visual[row + x] = this.bgVisual[row + x];
+      }
+    }
+    this.lastDrawn.length = 0;
+    this.dirty = true;
+  }
+
+  /** Note that the cast covered this rectangle, so it can be undone. */
+  castCovered(x0: number, y0: number, x1: number, y1: number) {
+    this.lastDrawn.push({ x0, y0, x1, y1 });
+  }
+
   restore() {
     this.epoch++;
     this.priority.set(this.bgPriority);
@@ -196,13 +229,24 @@ export class Screen {
    * goes, which is what keeps two sprites in the right order where they
    * overlap: without it, whichever is drawn second wins every pixel.
    */
-  drawCel(cel: Cel, left: number, top: number, priority: number, writePriority = false) {
-    this.blit(this.visual, this.priority, cel, left, top, priority, writePriority);
+  /**
+   * `clip` keeps a cel from painting over an open window.
+   *
+   * Only the cast asks for that.  A window's own decoration is drawn
+   * with this same call, from inside the window, and clipping it there
+   * would stop a game drawing the frame it just opened -- which is why
+   * Camelot's message panels came up as plain grey boxes with the
+   * ornament missing.
+   */
+  drawCel(cel: Cel, left: number, top: number, priority: number,
+          writePriority = false, clip = false) {
+    this.blit(this.visual, this.priority, cel, left, top, priority, writePriority, clip);
     this.dirty = true;
   }
 
   private blit(vis: Uint8Array, pri: Uint8Array, cel: Cel,
-               left: number, top: number, priority: number, writePriority: boolean) {
+               left: number, top: number, priority: number,
+               writePriority: boolean, clip = false) {
     for (let y = 0; y < cel.height; y++) {
       const py = top + y;
       if (py < 0 || py >= HEIGHT) continue;
@@ -214,7 +258,7 @@ export class Screen {
         const i = py * WIDTH + px;
         if (priority < pri[i]) continue;
         // A sprite is behind an open window, never over it.
-        if (vis === this.visual && !this.nothingProtected && this.covered(px, py)) continue;
+        if (clip && !this.nothingProtected && this.covered(px, py)) continue;
         // A cel index is one colour; the pair byte keeps the renderer's
         // two paths identical for pictures and for sprites.
         vis[i] = v < 16 ? ((v << 4) | v) : v;
@@ -269,13 +313,25 @@ export class Screen {
     this.dirty = true;
   }
 
+  /**
+   * The pair byte a colour stands for.
+   *
+   * `Graph` is given the byte the hardware wrote: 31 is the pair 1 and
+   * 15, not "colour 31".  Masking it to four bits threw away half of
+   * every dithered colour a window drew itself with.
+   */
+  private pair(c: number): number {
+    return c > 15 ? (c & 0xFF) : ((c & 0x0F) << 4) | (c & 0x0F);
+  }
+
   /** A line on the visual plane, for `Graph`'s grDRAW_LINE. */
   line(x0: number, y0: number, x1: number, y1: number, colour: number) {
     const dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
     const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
     let err = dx - dy, x = x0, y = y0;
+    const c = this.pair(colour);
     for (let guard = 0; guard < WIDTH + HEIGHT; guard++) {
-      this.px(x, y, colour);
+      this.pxPair(x, y, c);
       if (x === x1 && y === y1) break;
       const e2 = err * 2;
       if (e2 > -dy) { err -= dy; x += sx; }
@@ -296,7 +352,7 @@ export class Screen {
     for (let y = Math.max(0, y0); y < Math.min(HEIGHT, y1); y++) {
       const row = y * WIDTH;
       for (let x = Math.max(0, x0); x < Math.min(WIDTH, x1); x++) {
-        if ((screens & 1) && visual >= 0) this.visual[row + x] = ((visual & 0x0F) << 4) | (visual & 0x0F);
+        if ((screens & 1) && visual >= 0) this.visual[row + x] = this.pair(visual);
         if ((screens & 2) && priority >= 0) this.priority[row + x] = priority & 0x0F;
         if ((screens & 4) && control >= 0) this.control[row + x] = control & 0x0F;
       }
@@ -308,6 +364,12 @@ export class Screen {
     for (let x = x0; x < x1; x++) { this.px(x, y0, colour); this.px(x, y1 - 1, colour); }
     for (let y = y0; y < y1; y++) { this.px(x0, y, colour); this.px(x1 - 1, y, colour); }
   }
+  /** One pixel, given a pair byte already. */
+  pxPair(x: number, y: number, pair: number) {
+    if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT) return;
+    this.visual[y * WIDTH + x] = pair;
+  }
+
   /** One pixel of the picture, in the pair encoding the planes use. */
   px(x: number, y: number, c: number) {
     if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT) return;
