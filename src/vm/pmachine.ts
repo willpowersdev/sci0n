@@ -89,6 +89,9 @@ const MAX_FRAMES = 1024;
  * it when given -1, so it is the game's own record of "leave this
  * alone".  Everything without it follows its y down the screen.
  */
+/** What `TextSize` wraps at when the caller names no width. */
+const TEXT_WIDTH = 192;
+
 export const SIGNAL_FIXED_PRIORITY = 0x10;
 /**
  * `noTurn`: this object does not face the way it is going.
@@ -110,6 +113,8 @@ export const SIGNAL_NO_TURN = 0x800;
  */
 export const WINDOW_TRANSPARENT = 0x01;
 export const WINDOW_NOFRAME = 0x02;
+/** `nwNODRAW`: the window is not drawn at all. */
+export const WINDOW_NODRAW = 0x08;
 
 /**
  * Signal bits that say an actor is not there to be bumped into.
@@ -1706,7 +1711,18 @@ export class PMachine {
         // shadowing it sent `stringAt` looking in script 0.
         const fnt = this.font(args[2] ?? 0) ?? this.font(0);
         const t = this.stringAt(a1, f?.scriptNo);
-        const maxW = (args[3] ?? 0) > 0 ? args[3] : WIDTH;
+        /**
+         * How wide a line may be.
+         *
+         * The kernel's own defaults, not the screen's: an unspecified
+         * maximum wraps at 192, and -1 asks for one line however long
+         * it turns out.  Wrapping at the full 320 instead is what gave
+         * Camelot a message box 327 pixels wide, three pixels off the
+         * left of a 320-pixel screen, with Merlin's answer stretched
+         * across the whole picture on a single line.
+         */
+        const asked = s16(u16(args[3] ?? 0));
+        const maxW = asked > 0 ? asked : asked < 0 ? 0x7FFF : TEXT_WIDTH;
         // Measured exactly as it will be drawn.  This used to wrap on
         // characters while the drawing wrapped on words, so a game sized
         // a panel for five lines and then six were written into it --
@@ -1805,7 +1821,25 @@ export class PMachine {
         const bg = args[8] ?? 15;
         const x0 = Math.max(0, left - 1), y0 = Math.max(0, top - 1);
         const x1 = Math.min(WIDTH, right + 2), y1 = Math.min(HEIGHT, bottom + 2);
-        const saved = this.screen.save(x0, y0, x1, y1);
+        /**
+         * Only a window that paints something has anything to put back.
+         *
+         * `nwTRANSPARENT` draws no background, no border and no title,
+         * and `nwNODRAW` draws nothing whatever, so neither covers a
+         * pixel it would have to restore.  Saving for one of those and
+         * restoring on dispose does real damage: it reinstates whatever
+         * happened to be on the screen when the window opened, undoing
+         * everything drawn there since.
+         *
+         * Camelot's message box is exactly that case.  The script
+         * paints its own grey panel, brackets it with Graph's own save
+         * and restore, and asks for a transparent window only to have a
+         * port to write the text into.  Restoring on dispose put the
+         * panel straight back over the picture the script had just
+         * carefully restored, and it stayed there for good.
+         */
+        const draws = !(style & (WINDOW_TRANSPARENT | WINDOW_NODRAW));
+        const saved = draws ? this.screen.save(x0, y0, x1, y1) : null;
         // A transparent window paints no background of its own and a
         // frameless one draws no border: Camelot's options box asks for
         // both (style 129) and draws its own ornament instead, so
@@ -1829,7 +1863,7 @@ export class PMachine {
         if (w) {
           const cover = this.screen.windows.indexOf(w.area);
           if (cover >= 0) { this.screen.windows.splice(cover, 1); this.screen.protectionChanged(); }
-          this.screen.restoreRect(w.rect);
+          if (w.rect) this.screen.restoreRect(w.rect);
           this.windows.delete(a0);
           const i = this.ports.lastIndexOf(w.port);
           if (i > 0) this.ports.splice(i, 1);

@@ -147,5 +147,87 @@ console.log(`  the keyboard ${byKey ? `takes the game on to picture ${st.picture
                                                 : `LEAVES IT ON PICTURE ${was}`}`);
 }
 
+/**
+ * A message box in the game: how wide it is, and what it leaves behind.
+ *
+ * Both halves were wrong at once, and both are about a kernel doing
+ * more or less than it should.
+ *
+ * `TextSize` wraps at 192 when the caller names no width -- that is the
+ * kernel's own default, not the screen's.  Wrapping at the full 320
+ * instead gave Camelot a box 327 pixels wide on a 320-pixel screen,
+ * three pixels off the left edge, with the whole reply on one line.
+ *
+ * `DisposeWindow` then put a grey rectangle back over the picture and
+ * left it there.  The script paints its own panel, brackets it with
+ * Graph's save and restore, and asks for a *transparent* window only to
+ * have a port to write text into.  A transparent window paints nothing,
+ * so it has nothing to restore -- but the bits were being saved anyway
+ * when it opened and stamped back down when it closed, undoing the
+ * restore the script had just done.
+ *
+ * The second check is the strict one: not "most of the picture came
+ * back" but every pixel, because a restore that is right except at the
+ * edges is still a visible seam.
+ */
+{
+  const g = new Game(nodeSource(join(ROOT, 'CAMELOT')));
+  const idx = new Index(g);
+  const sess = new Session(g, idx);
+  let c = 0;
+  sess.now = () => c;
+  const tick = () => { c += 1000 / 60; return sess.tick(); };
+  const vm = sess.vm as any;
+
+  let state = sess.tick();
+  for (let i = 0; i < 12_000 && state.running; i++) {
+    if (i % 120 === 0) sess.key(ENTER);
+    state = tick();
+  }
+
+  // The picture as it stands before anything is typed.
+  const before = Uint8Array.from(sess.screen.visual);
+
+  const newWindow = idx.kernel.indexOf('NewWindow');
+  let box: number[] | null = null;
+  const kernel = vm.kernel.bind(vm);
+  vm.kernel = (id: number, a: number[], f: any) => {
+    // The last window typing opens is the reply, not the input line.
+    if (id === newWindow) box = a.slice(0, 4);
+    return kernel(id, a, f);
+  };
+
+  for (const ch of 'ask merlin about the grail') {
+    sess.key(ch.charCodeAt(0));
+    for (let i = 0; i < 10 && state.running; i++) state = tick();
+  }
+  box = null;
+  sess.key(ENTER);
+  for (let i = 0; i < 400 && state.running; i++) state = tick();
+
+  checked++;
+  if (!box) {
+    failed++;
+    console.log('  typing a question opened no reply window at all');
+  } else {
+    const [top, left, bottom, right] = box as number[];
+    const w = right - left;
+    const fits = left >= 0 && right <= WIDTH && w > 0;
+    if (!fits) failed++;
+    console.log(`  the reply box is ${left},${top}-${right},${bottom} (${w}x${bottom - top})` +
+      `${fits ? '' : ` -- ${w > WIDTH ? 'WIDER THAN THE SCREEN' : 'OFF THE EDGE'}`}`);
+  }
+
+  // Dismiss it, and the picture must be exactly as it was.
+  sess.key(ENTER);
+  for (let i = 0; i < 400 && state.running; i++) state = tick();
+  checked++;
+  let diff = 0;
+  const after = sess.screen.visual;
+  for (let i = 0; i < before.length; i++) if (before[i] !== after[i]) diff++;
+  if (diff) failed++;
+  console.log(`  dismissing it leaves ${diff ? `${diff} PIXELS OF THE BOX BEHIND` : 'the picture exactly as it was'}`);
+}
+
 console.log(`\n${checked - failed}/${checked} opening-menu checks passed`);
 process.exit(failed ? 1 : 0);
