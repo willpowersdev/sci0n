@@ -207,15 +207,28 @@ export class Screen {
    */
   private lastDrawn: Array<{ x0: number; y0: number; x1: number; y1: number }> = [];
 
-  /** Put the picture back under whatever the cast covered last cycle. */
+  /**
+   * Put the picture back under whatever the cast covered last cycle.
+   *
+   * What is protected stays protected.  A sprite is kept from painting
+   * over an open window by `blit`, but putting the picture *back*
+   * needed the same care and did not have it: wherever a window
+   * happened to overlap the rectangle a sprite occupied last cycle,
+   * the background was laid straight over the window and ate a strip
+   * of it.  Arthur standing beside the parser's message box took the
+   * first few letters off it every frame.
+   */
   restoreCastAreas() {
     this.epoch++;
     this.priority.set(this.bgPriority);
+    const guarded = !this.nothingProtected;
     for (const r of this.lastDrawn) {
       for (let y = Math.max(0, r.y0); y < Math.min(HEIGHT, r.y1); y++) {
         const row = y * WIDTH;
-        for (let x = Math.max(0, r.x0); x < Math.min(WIDTH, r.x1); x++)
+        for (let x = Math.max(0, r.x0); x < Math.min(WIDTH, r.x1); x++) {
+          if (guarded && this.covered(x, y)) continue;
           this.visual[row + x] = this.bgVisual[row + x];
+        }
       }
     }
     this.lastDrawn.length = 0;

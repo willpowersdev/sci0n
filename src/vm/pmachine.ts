@@ -1663,6 +1663,23 @@ export class PMachine {
       case 'GetEvent': {
         const mask = a0;
         const ev = this.resolveTarget(null, a1);
+        // A message from the parser is modal: the next thing the player
+        // does takes it down, and the game does not get to act on it.
+        if (this.parseMsg && !(mask & EV.peek)) {
+          const j = this.events.findIndex(e => (e.type & (EV.keyboard | EV.mouseDown)) !== 0);
+          if (j >= 0) {
+            this.events.splice(j, 1);
+            this.dismissParseMessage();
+            if (ev) {
+              this.setProp(ev, 'type', EV.null);
+              this.setProp(ev, 'message', 0);
+              this.setProp(ev, 'modifiers', 0);
+              this.setProp(ev, 'x', this.mouseX);
+              this.setProp(ev, 'y', this.mouseY);
+            }
+            return 0;
+          }
+        }
         const i = this.events.findIndex(e => (e.type & mask) !== 0);
         if (i < 0) {
           // An empty queue still has to say where the pointer is.  A
@@ -2138,7 +2155,31 @@ export class PMachine {
           this.setProp(ev, 'claimed', 0);
           if (!unknown) this.setProp(ev, 'type', EV.said);
         }
-        return unknown ? 0 : 1;
+        /**
+         * Answering a line the parser could not read.
+         *
+         * The script's whole response to a failed `Parse` is to return,
+         * so unless the interpreter says something nothing is said at
+         * all -- and a word the game has never heard of looks exactly
+         * like a keyboard that has stopped working.  "remove suit of
+         * armor" is one: Camelot knows "armor", "armour" and "mail",
+         * but not "suit".
+         *
+         * The two failures are different and the games word them
+         * differently.  A word outside the vocabulary is named back, so
+         * the player can try another; a line of words it knows but
+         * cannot fit to the grammar is not.
+         */
+        if (unknown) {
+          const t = this.systemMessage(/understand.*%s/i, PMachine.UNKNOWN_WORD);
+          this.showParseMessage(t.replace(/%s/, unknown));
+          return 0;
+        }
+        if (!this.parser.parse_) {
+          this.showParseMessage(this.systemMessage(/proper sentence/i, PMachine.BAD_SENTENCE));
+          return 0;
+        }
+        return 1;
       }
 
       /**
@@ -2622,6 +2663,75 @@ export class PMachine {
   }
 
   private get port() { return this.ports[this.ports.length - 1]; }
+
+  /**
+   * The parser's own messages, and the box they appear in.
+   *
+   * When the parser cannot make anything of a line, the reply comes
+   * from the interpreter rather than from the game: the script's whole
+   * response to a failed `Parse` is to return, so nothing at all was
+   * said back and a mistyped word looked exactly like a dead keyboard.
+   *
+   * The wording is the games' own.  Resource text.994 is the system
+   * message table, and the later SCI0 games carry the parser's lines in
+   * it -- "I don't understand \"%s\"." for a word the vocabulary has
+   * not got, and "That doesn't appear to be a proper sentence." for one
+   * it knows every word of but cannot fit to the grammar.  The earliest
+   * ones, Camelot among them, ship a shorter table and kept those two
+   * inside the interpreter, so they are spelled out here as a fallback.
+   * They are matched by content rather than by index, because the index
+   * moves with the size of the table.
+   */
+  private static readonly UNKNOWN_WORD = 'I don\'t understand "%s".';
+  private static readonly BAD_SENTENCE = "That doesn't appear to be a proper sentence.";
+
+  /** A message on the screen, and the pixels it is covering. */
+  private parseMsg: { rect: { x0: number; y0: number; w: number; h: number; buf: Uint8Array };
+                      area: { x0: number; y0: number; x1: number; y1: number } } | null = null;
+
+  /** The system message whose text looks like `like`, or `fallback`. */
+  private systemMessage(like: RegExp, fallback: string): string {
+    for (const l of this.textLines(994)) if (like.test(l)) return l;
+    return fallback;
+  }
+
+  /**
+   * Put a message on the screen and hold it there.
+   *
+   * Centred, black on white with a frame, and registered the way a
+   * window is so the picture is not painted back over it.  It stays
+   * until the player presses or clicks something -- `GetEvent` spends
+   * that event on taking it down rather than passing it to the game,
+   * which is what a modal box does.
+   */
+  private showParseMessage(text: string) {
+    this.dismissParseMessage();
+    const font = this.font(0);
+    if (!font) return;
+    const box = this.textExtent(font, text, TEXT_WIDTH);
+    const w = Math.min(WIDTH - 8, box.width + 10), h = box.height + 10;
+    const x0 = Math.max(0, (WIDTH - w) >> 1), y0 = Math.max(0, (HEIGHT - h) >> 1);
+    const x1 = Math.min(WIDTH, x0 + w), y1 = Math.min(HEIGHT, y0 + h);
+    const area = { x0, y0, x1, y1 };
+    const rect = this.screen.save(x0, y0, x1, y1);
+    this.screen.fill(x0, y0, x1, y1, 15);
+    this.screen.frame(x0, y0, x1, y1, 0);
+    this.drawText(font, text, x0 + 5, y0 + 5, 0, w - 10, 1);
+    this.screen.windows.push(area);
+    this.screen.protectionChanged();
+    this.parseMsg = { rect, area };
+  }
+
+  /** Take the message down, if one is up.  True if there was one. */
+  private dismissParseMessage(): boolean {
+    const m = this.parseMsg;
+    if (!m) return false;
+    const i = this.screen.windows.indexOf(m.area);
+    if (i >= 0) { this.screen.windows.splice(i, 1); this.screen.protectionChanged(); }
+    this.screen.restoreRect(m.rect);
+    this.parseMsg = null;
+    return true;
+  }
 
   /** Lines of a text resource, cached. */
   textLines(n: number): string[] {

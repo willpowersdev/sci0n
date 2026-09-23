@@ -21,6 +21,7 @@ import { join } from 'node:path';
 import { Game, type ResourceSource } from '../src/resources.ts';
 import { Index } from '../src/script.ts';
 import { Session } from '../src/vm/session.ts';
+import { WIDTH, HEIGHT } from '../src/vm/screen.ts';
 import { ROOT } from './games.ts';
 
 const ENTER = 0x0D;
@@ -79,5 +80,113 @@ for (const [name, command] of [['SQ3', 'look'], ['CAMELOT', 'look']] as Array<[s
   console.log(`          an unknown word is reported back as "${unknown}"` +
     `${ok ? '' : ' -- EXPECTED THE WORD ITSELF, AND THE COMMAND TO PARSE'}`);
 }
+/**
+ * A line the parser cannot read is answered, not ignored.
+ *
+ * The script's whole response to a failed `Parse` is to return, so
+ * unless the interpreter speaks up nothing is said at all -- and a word
+ * the game has never heard of looks exactly like a keyboard that has
+ * stopped working.  "remove suit of armor" is one: Camelot knows
+ * "armor", "armour" and "mail", but not "suit".
+ *
+ * The wording is the games' own, out of resource text.994.  The later
+ * SCI0 games carry the parser's lines there; Camelot ships a shorter
+ * table and kept them inside the interpreter, so it falls back to the
+ * same text.
+ *
+ * What is checked is the glyphs on the screen, not a flag: the message
+ * is rendered through the game's own font and looked for in the
+ * picture.  That is deliberate, because the first way this went wrong
+ * was a box that drew correctly and was then eaten from the left -- the
+ * cast's background restore ran over it every frame, and "I don't
+ * understand" arrived as "don't understand".  A check that only asked
+ * whether a message existed would have passed.
+ */
+for (const [name, bad, nonsense] of [
+  ['CAMELOT', 'remove suit of armor', 'purse the eat'],
+  ['SQ3', 'get the zzxyqq', 'rock the get'],
+] as Array<[string, string, string]>) {
+  const g = new Game(nodeSource(join(ROOT, name)));
+  const idx = new Index(g);
+  const s = new Session(g, idx);
+  let clock = 0;
+  s.now = () => clock;
+  const step = () => { clock += 1000 / 60; return s.tick(); };
+  const vm = s.vm as any;
+  let st = s.tick();
+  for (let i = 0; i < 12_000 && st.running; i++) { if (i % 120 === 0) s.key(ENTER); st = step(); }
+
+  const type = (line: string) => {
+    for (const ch of line) { s.key(ch.charCodeAt(0)); for (let i = 0; i < 10 && st.running; i++) st = step(); }
+    s.key(ENTER);
+    for (let i = 0; i < 300 && st.running; i++) st = step();
+  };
+
+  const clean = Uint8Array.from(s.screen.visual);
+  type(bad);
+  checked += 2;
+  // The unknown word itself has to be named back, inside the message.
+  const named = onScreen(s, `"${bad.split(' ').find(w => vm.parser.parse(w) !== null) ?? ''}"`);
+  // The whole opening of the message, not a fragment of it: the first
+  // way this broke was a box drawn correctly and then eaten from the
+  // left, which a search starting mid-sentence would not have noticed.
+  const said = onScreen(s, "I don't understand");
+  if (!said) failed++;
+  if (!named) failed++;
+  console.log(`${name.padEnd(9)} "${bad}" · ${said ? 'the parser answers' : 'SAYS NOTHING'}` +
+    ` · ${named ? 'and names the word back' : 'BUT DOES NOT NAME THE WORD'}`);
+
+  // Any key takes it down, and the picture comes back untouched.
+  checked++;
+  s.key(0x20);
+  for (let i = 0; i < 300 && st.running; i++) st = step();
+  let diff = 0;
+  for (let i = 0; i < clean.length; i++) if (clean[i] !== s.screen.visual[i]) diff++;
+  if (diff) failed++;
+  console.log(`          a keypress takes it down${diff ? ` -- ${diff} PIXELS LEFT BEHIND` : ' and leaves the picture as it was'}`);
+
+  // Words it knows in an order it cannot follow is the other failure.
+  checked++;
+  type(nonsense);
+  const sentence = onScreen(s, "sentence");
+  if (!sentence) failed++;
+  console.log(`          "${nonsense}" · ${sentence ? 'answered as a sentence it cannot follow' : 'SAYS NOTHING'}`);
+  s.key(0x20);
+  for (let i = 0; i < 200 && st.running; i++) st = step();
+}
+
 console.log(`\n${checked - failed}/${checked} command checks passed`);
 process.exit(failed ? 1 : 0);
+
+/**
+ * Is this text drawn on the screen, in the interpreter's own font?
+ *
+ * Rendered glyph by glyph and matched against the picture, so a message
+ * that exists only in memory -- or one that has had its first letters
+ * painted over -- cannot satisfy it.
+ */
+function onScreen(sess: Session, text: string): boolean {
+  const font = (sess.vm as any).font(0);
+  if (!font) return false;
+  const glyphs = [...text].map(c => font.chars[c.charCodeAt(0)]);
+  if (glyphs.some(gl => !gl)) return false;
+  const vis = sess.screen.visual;
+  const h = Math.max(...glyphs.map(gl => gl.height));
+  for (let y = 0; y + h < HEIGHT; y++)
+    for (let x = 0; x < WIDTH; x++) {
+      let cx = x, all = true;
+      for (const gl of glyphs) {
+        for (let gy = 0; gy < gl.height && all; gy++)
+          for (let gx = 0; gx < gl.width && all; gx++) {
+            if (!gl.bits[gy * gl.width + gx]) continue;
+            const px = cx + gx, py = y + gy;
+            // The box is black on white, so a set bit must be dark.
+            if (px >= WIDTH || py >= HEIGHT || (vis[py * WIDTH + px] & 0x0F) !== 0) all = false;
+          }
+        cx += gl.width;
+        if (!all) break;
+      }
+      if (all) return true;
+    }
+  return false;
+}
