@@ -138,6 +138,19 @@ export class Screen {
    */
   undither = true;
 
+  /**
+   * Whether the strip above the picture is shown.
+   *
+   * SCI keeps the status line and the menu bar off screen until they
+   * are asked for -- Escape brings the menus down -- and the picture
+   * has the whole display to itself until then.  Showing it always left
+   * a band across the top that most games never write anything into.
+   */
+  statusVisible = false;
+
+  /** Rows the display occupies, which the strip changes. */
+  get displayHeight() { return HEIGHT + (this.statusVisible ? STATUS_HEIGHT : 0); }
+
   drawPic(pic: Picture, clear = true) {
     this.overlays.length = 0;
     this.maskStale = true;
@@ -297,8 +310,9 @@ export class Screen {
     this.dirty = true;
   }
 
-  rgb(out = new Uint8Array(WIDTH * SCREEN_HEIGHT * 3)): Uint8Array {
-    for (let y = 0; y < STATUS_HEIGHT; y++)
+  rgb(out = new Uint8Array(WIDTH * this.displayHeight * 3)): Uint8Array {
+    const top = this.statusVisible ? STATUS_HEIGHT : 0;
+    for (let y = 0; y < top; y++)
       for (let x = 0; x < WIDTH; x++) {
         const v = this.statusBar[y * WIDTH + x];
         const c = this.undither ? BLENDED_RGB[v] : EGA_RGB[ditherPixel(v, x, y)];
@@ -309,7 +323,7 @@ export class Screen {
       for (let x = 0; x < WIDTH; x++) {
         const v = this.visual[y * WIDTH + x];
         const c = this.undither ? BLENDED_RGB[v] : EGA_RGB[ditherPixel(v, x, y)];
-        const o = ((y + STATUS_HEIGHT) * WIDTH + x) * 3;
+        const o = ((y + top) * WIDTH + x) * 3;
         out[o] = c[0]; out[o + 1] = c[1]; out[o + 2] = c[2];
       }
     }

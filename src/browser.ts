@@ -277,6 +277,9 @@ function stopPlay() {
 function onPlayKey(e: KeyboardEvent) {
   if (!session) return;
   if (e.key === 'Escape' && e.shiftKey) { stopPlay(); return; }
+  // Escape brings the menu strip down, as it does on the original, and
+  // takes it away again.  The key still reaches the game.
+  if (e.key === 'Escape') session.screen.statusVisible = !session.screen.statusVisible;
   if (e.metaKey) return;                     // leave the browser's own shortcuts alone
   if (e.key.length === 1 && !e.ctrlKey && !e.altKey) return;   // the input event has it
   const m = keyMessage(e);
@@ -404,18 +407,21 @@ function startPlay() {
   audioAt = 0;
   void audio.resume();
 
+  // Room for the strip above the picture whether or not it is showing.
   const rgb = new Uint8Array(WIDTH * SCREEN_HEIGHT * 3);
   const frame = () => {
     if (!session) return;
     const st = session.tick();
-    session.screen.rgb(rgb);
-    blit(rgb, WIDTH, SCREEN_HEIGHT);
+    const h = session.screen.displayHeight;
+    const view = rgb.subarray(0, WIDTH * h * 3);
+    session.screen.rgb(view);
+    blit(view, WIDTH, h);
     $('hud').textContent =
       `${st.frames} frames · ${(st.instructions / 1e6).toFixed(1)}M instructions` +
       `${st.picture >= 0 ? ` · picture ${st.picture}` : ''}` +
       (session.vm.sounds.active ? ` · ♪ ${session.vm.sounds.active}` : '') +
       (st.running ? `  ·  ${session.cyclesPerSecond.toFixed(0)} cycles/s` +
-                    '  ·  shift-esc to leave  ·  fn fn to dictate'
+                    '  ·  esc for the menu bar  ·  shift-esc to leave  ·  fn fn to dictate'
                   : `  ·  stopped: ${st.stopped ?? ''}`);
     if (session.vm.sounds.available) pumpAudio(session);
     if (st.running) raf = requestAnimationFrame(frame);
@@ -1236,8 +1242,9 @@ function adopt(g: Game) {
 cv.addEventListener('mousemove', (e) => {
   if (!session) return;
   const r = cv.getBoundingClientRect();
+  const h = session.screen.displayHeight;
   const x = Math.round((e.clientX - r.left) / r.width * WIDTH);
-  const y = Math.round((e.clientY - r.top) / r.height * SCREEN_HEIGHT) - 10;
+  const y = Math.round((e.clientY - r.top) / r.height * h) - (h - 190);
   session.move(Math.max(0, Math.min(319, x)), Math.max(0, Math.min(189, y)));
 });
 /**
@@ -1251,8 +1258,10 @@ for (const [name, type] of [['mousedown', EV.mouseDown], ['mouseup', EV.mouseUp]
   cv.addEventListener(name, (e) => {
     if (!session) return;
     const r = cv.getBoundingClientRect();
+    const h = session.screen.displayHeight;
     const x = Math.round(((e as MouseEvent).clientX - r.left) / r.width * WIDTH);
-    const y = Math.round(((e as MouseEvent).clientY - r.top) / r.height * SCREEN_HEIGHT) - 10;
+    // The picture starts below the strip only while the strip is shown.
+    const y = Math.round(((e as MouseEvent).clientY - r.top) / r.height * h) - (h - 190);
     session.mouse(type, Math.max(0, Math.min(319, x)), Math.max(0, Math.min(189, y)));
   });
 }
