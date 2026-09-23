@@ -26,6 +26,7 @@ import { strings as textStrings } from '../text.ts';
 import { Screen, WIDTH, HEIGHT } from './screen.ts';
 import { SoundBox, SIGNAL_FINISHED } from './sounds.ts';
 import { MenuBar, SM } from './menu.ts';
+import { Parser } from './parser.ts';
 
 /**
  * Debug sampler.  A blocked synchronous loop never reaches a timer or
@@ -238,6 +239,8 @@ export class PMachine {
   sounds: SoundBox;
   /** The menus a game declares with `AddMenu`. */
   menu = new MenuBar();
+  /** The text parser, built from the game's own vocabulary. */
+  parser: Parser;
 
   /**
    * Tell any script waiting on music that its piece has finished.
@@ -283,6 +286,7 @@ export class PMachine {
     this.game = game;
     this.index = index ?? new Index(game);
     this.sounds = new SoundBox(game, this.index);
+    this.parser = new Parser(game);
     this.species = new SpeciesTable(game, this.index);
     const s0 = this.script(0);
     if (s0) this.globals.set(Int32Array.from(s0.locals.map(s16)).subarray(0, 1024));
@@ -936,6 +940,24 @@ export class PMachine {
       }
     }
     return null;
+  }
+
+  /**
+   * The compiled pattern a `Said` argument points at.
+   *
+   * Patterns live in the script's said block, one after another and
+   * terminated by 0xFF, and the reference carries the script it came
+   * from -- which is why every pointer is tagged.
+   */
+  private saidSpec(ref: number): Uint8Array | null {
+    if (!isRef(ref)) return null;
+    const sc = this.index.script(refScript(ref));
+    if (!sc) return null;
+    const at = refOffset(ref);
+    for (const [off, bytes] of sc.said) if (off === at) return bytes;
+    // Not the start of a pattern, so read from here to the terminator.
+    const end = sc.data.indexOf(0xFF, at);
+    return end > at ? sc.data.subarray(at, end) : null;
   }
 
   /**
@@ -2042,6 +2064,45 @@ export class PMachine {
         if (a1 === SM.key) return it.key;
         if (a1 === SM.enable) return it.enabled ? 1 : 0;
         return 0;
+      }
+
+      /**
+       * Read a line the player typed.
+       *
+       * Returns whether every word was understood.  A game that gets no
+       * for an answer says so itself -- `wordFail` names the word back
+       * to the player -- so answering 0 for everything, as this did,
+       * left pressing Return doing nothing at all.
+       */
+      case 'Parse': {
+        const text = this.stringAt(a0, f?.scriptNo);
+        const ev = this.resolveTarget(null, a1);
+        this.parser.event = a1;
+        const unknown = this.parser.parse(text);
+        if (ev) {
+          this.setProp(ev, 'claimed', 0);
+          if (!unknown) this.setProp(ev, 'type', EV.said);
+        }
+        return unknown ? 0 : 1;
+      }
+
+      /**
+       * Does the line match this pattern?
+       *
+       * A match claims the event the parse was given, so nothing else
+       * acts on the same words, and spends the line -- the games ask
+       * their specific patterns before their general ones and rely on
+       * only the first answering.
+       */
+      case 'Said': {
+        const spec = this.saidSpec(a0);
+        if (!spec) return 0;
+        const r = this.parser.match(spec);
+        if (r.matched && r.claim) {
+          const ev = this.resolveTarget(null, this.parser.event);
+          if (ev) this.setProp(ev, 'claimed', 1);
+        }
+        return r.matched ? 1 : 0;
       }
 
       case 'DisposeScript': case 'FlushResources': case 'MemoryInfo':
