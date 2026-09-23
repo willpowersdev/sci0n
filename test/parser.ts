@@ -23,8 +23,8 @@
  *
  * Only a game that asks for one is judged on it.  SQ3 draws a score
  * line; Camelot puts a menu bar in the same strip and never calls
- * `DrawStatus` at all, and menus are not implemented, so there is
- * nothing there to be right or wrong about yet.
+ * `DrawStatus` at all, so its strip is the menu bar's -- see
+ * test/menubar.ts.
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -165,7 +165,7 @@ for (const name of ['SQ3', 'CAMELOT']) {
   let dark = 0;
   for (const v of bar) if ((v & 0x0F) === 0) dark++;
   if (!s.screen.status.trim()) {
-    console.log(`          no status line asked for (this game uses a menu bar, which is not implemented)`);
+    console.log(`          no status line asked for (this game puts a menu bar in the strip)`);
   } else {
     checked++;
     const lit = dark > 0 && dark < bar.length;

@@ -25,6 +25,7 @@ import { Font } from '../font.ts';
 import { strings as textStrings } from '../text.ts';
 import { Screen, WIDTH, HEIGHT } from './screen.ts';
 import { SoundBox, SIGNAL_FINISHED } from './sounds.ts';
+import { MenuBar, SM } from './menu.ts';
 
 /**
  * Debug sampler.  A blocked synchronous loop never reaches a timer or
@@ -235,6 +236,8 @@ export class PMachine {
   currentPic = -1;
   /** The AdLib driver the game drives through `DoSound`. */
   sounds: SoundBox;
+  /** The menus a game declares with `AddMenu`. */
+  menu = new MenuBar();
 
   /**
    * Tell any script waiting on music that its piece has finished.
@@ -598,6 +601,16 @@ export class PMachine {
             // immediately instead lets a game run its whole cycle as many
             // times as the instruction budget allows, which is why
             // everything moved far too fast.
+            if (this.index.kernelName(a[0]) === 'MenuSelect') {
+              // Blocks on real hardware; here it takes a frame at a
+              // time and the instruction is run again until it answers.
+              const r = this.menuStep(st[pBase + 1] ?? 0);
+              if (r === null) { f.pc = ins.pc; yielded = true; break; }
+              this.restAdjust = 0;
+              st.splice(pBase, words + 1);
+              this.acc = r;
+              break;
+            }
             if (this.index.kernelName(a[0]) === 'Wait') {
               const asked = st[pBase + 1] ?? 0;
               const want = asked > 0 ? asked : this.minWait;
@@ -846,6 +859,69 @@ export class PMachine {
     this.setProp(ev, 'x', s16(u16(this.prop(ev, 'x'))) + sign * p.x);
     this.setProp(ev, 'y', s16(u16(this.prop(ev, 'y'))) + sign * p.y);
     return ref;
+  }
+
+  /**
+   * One frame of the menu, for `MenuSelect`.
+   *
+   * The kernel blocks on real hardware: it opens the menus and runs its
+   * own loop until the player picks something.  Nothing here can block,
+   * so this does one frame's worth and says whether it is finished --
+   * `null` means "still open", and the interpreter runs the same
+   * `MenuSelect` again next frame, the way it already does for `Wait`.
+   *
+   * Returns the chosen item as (menu << 8) | item, both counting from
+   * one, or -1 when the player backed out.
+   */
+  menuStep(evRef: number): number | null {
+    const ev = this.resolveTarget(null, evRef);
+    const font = this.font(0);
+    if (this.menu.openMenu < 0) {
+      if (!ev) return -1;
+      const type = u16(this.prop(ev, 'type'));
+      const message = u16(this.prop(ev, 'message'));
+      const y = s16(u16(this.prop(ev, 'y')));
+      // A shortcut picks its item without the menus ever appearing.
+      const direct = type === EV.keyboard ? this.menu.forKey(message) : 0;
+      if (direct) { this.setProp(ev, 'claimed', 1); return direct; }
+      if (!this.menu.menus.length) return -1;
+      if (!this.menu.activates(type, message, y)) return -1;
+      this.setProp(ev, 'claimed', 1);
+      const at = type === EV.mouseDown ? this.menu.menuAt(s16(u16(this.prop(ev, 'x')))) : 0;
+      this.menu.open(this.screen, font, at < 0 ? 0 : at);
+      return null;
+    }
+    // Open: spend this frame's events on it.
+    while (this.events.length) {
+      const e = this.events.shift()!;
+      if (e.type === EV.keyboard) {
+        if (e.message === 27) { this.menu.close(this.screen, font); return -1; }
+        if (e.message === 13) {
+          const id = this.menu.chosen();
+          if (id) { this.menu.close(this.screen, font); return id; }
+          continue;
+        }
+        if (e.message === 0x4B00) this.menu.move(this.screen, font, -1, 0);
+        else if (e.message === 0x4D00) this.menu.move(this.screen, font, 1, 0);
+        else if (e.message === 0x4800) this.menu.move(this.screen, font, 0, -1);
+        else if (e.message === 0x5000) this.menu.move(this.screen, font, 0, 1);
+      } else if (e.type === EV.mouseDown || e.type === EV.mouseUp) {
+        const overBar = e.y < 0 ? this.menu.menuAt(e.x) : -1;
+        if (overBar >= 0 && overBar !== this.menu.openMenu) {
+          this.menu.move(this.screen, font, overBar - this.menu.openMenu, 0);
+        } else {
+          const it = this.menu.itemAt(font, e.x, e.y);
+          if (it >= 0 && it !== this.menu.openItem)
+            this.menu.move(this.screen, font, 0, it - this.menu.openItem);
+          if (e.type === EV.mouseUp) {
+            const id = it >= 0 ? this.menu.chosen() : 0;
+            this.menu.close(this.screen, font);
+            return id || -1;
+          }
+        }
+      }
+    }
+    return null;
   }
 
   /**
@@ -1838,8 +1914,54 @@ export class PMachine {
         return 0;
       }
 
+      /**
+       * Declare a menu.  The title goes on the bar and the items are
+       * one colon-separated string; `parseItems` does the marking up.
+       */
+      case 'AddMenu':
+        this.menu.add(this.stringAt(a0, f?.scriptNo), this.stringAt(a1, f?.scriptNo));
+        return 0;
+
+      /** Show or hide the bar. */
+      case 'DrawMenuBar': {
+        if (a0) {
+          this.menu.drawBar(this.screen, this.font(0));
+          this.screen.statusVisible = true;
+        } else this.screen.statusVisible = false;
+        return 0;
+      }
+
+      /**
+       * Change one item: its `Said` spec, its text, its shortcut or
+       * whether it can be chosen.  A game disables what does not apply
+       * to where the player is standing, so this is called constantly.
+       */
+      case 'SetMenu': {
+        // Several (subFunction, value) pairs may follow the item.
+        for (let i = 1; i + 1 < args.length + 1 && i < args.length; i += 2) {
+          const it = this.menu.item(a0);
+          if (!it) break;
+          const v = args[i + 1] ?? 0;
+          if (args[i] === SM.said) it.said = v;
+          else if (args[i] === SM.text) it.text = this.stringAt(v, f?.scriptNo);
+          else if (args[i] === SM.key) it.key = v;
+          else if (args[i] === SM.enable) it.enabled = v !== 0;
+        }
+        return 0;
+      }
+
+      case 'GetMenu': {
+        const it = this.menu.item(a0);
+        if (!it) return 0;
+        if (a1 === SM.said) return it.said;
+        if (a1 === SM.text) return this.makeString(it.text);
+        if (a1 === SM.key) return it.key;
+        if (a1 === SM.enable) return it.enabled ? 1 : 0;
+        return 0;
+      }
+
       case 'DisposeScript': case 'FlushResources': case 'MemoryInfo':
-      case 'SetMenu': case 'AddMenu': case 'DrawMenuBar': case 'SetSynonyms':
+      case 'SetSynonyms':
       case 'GetSaveDir': case 'GetCWD':
       case 'FileIO':
       case 'FOpen': case 'FClose': case 'FGets': case 'FPuts':

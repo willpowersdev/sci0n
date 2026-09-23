@@ -267,7 +267,8 @@ export class Screen {
     for (let x = x0; x < x1; x++) { this.px(x, y0, colour); this.px(x, y1 - 1, colour); }
     for (let y = y0; y < y1; y++) { this.px(x0, y, colour); this.px(x1 - 1, y, colour); }
   }
-  private px(x: number, y: number, c: number) {
+  /** One pixel of the picture, in the pair encoding the planes use. */
+  px(x: number, y: number, c: number) {
     if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT) return;
     this.visual[y * WIDTH + x] = (c << 4) | c;
   }

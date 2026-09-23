@@ -22,6 +22,7 @@ import { OPL_RATE } from './opl/opl2.ts';
 import { encodeGIF, type Frame } from './gif.ts';
 import { encodeWAV } from './wav.ts';
 import { Session, SCREEN_HEIGHT } from './vm/session.ts';
+import { STATUS_HEIGHT } from './vm/screen.ts';
 import { EV } from './vm/pmachine.ts';
 import { Scene } from './scene.ts';
 import { picHistogram, unditherCel } from './undither.ts';
@@ -1245,7 +1246,7 @@ cv.addEventListener('mousemove', (e) => {
   const h = session.screen.displayHeight;
   const x = Math.round((e.clientX - r.left) / r.width * WIDTH);
   const y = Math.round((e.clientY - r.top) / r.height * h) - (h - 190);
-  session.move(Math.max(0, Math.min(319, x)), Math.max(0, Math.min(189, y)));
+  session.move(Math.max(0, Math.min(319, x)), Math.max(-STATUS_HEIGHT, Math.min(189, y)));
 });
 /**
  * Both halves of a click.
@@ -1262,7 +1263,10 @@ for (const [name, type] of [['mousedown', EV.mouseDown], ['mouseup', EV.mouseUp]
     const x = Math.round(((e as MouseEvent).clientX - r.left) / r.width * WIDTH);
     // The picture starts below the strip only while the strip is shown.
     const y = Math.round(((e as MouseEvent).clientY - r.top) / r.height * h) - (h - 190);
-    session.mouse(type, Math.max(0, Math.min(319, x)), Math.max(0, Math.min(189, y)));
+    // A negative y is the strip above the picture, where the menu
+    // titles live; clamping it to zero would put every click on the
+    // menu bar into the top row of the picture instead.
+    session.mouse(type, Math.max(0, Math.min(319, x)), Math.max(-STATUS_HEIGHT, Math.min(189, y)));
   });
 }
 
