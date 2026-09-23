@@ -2317,14 +2317,35 @@ export class PMachine {
        * into water, so returning 0 meant none of that ever fired.
        */
       case 'OnControl': {
-        // The first argument selects the map; only the control one is
-        // ever asked for here.  With four more it reports on a
-        // rectangle, with one more on an actor's base.
-        if (args.length >= 4) {
+        /**
+         * Two forms, and the short one was missing.
+         *
+         * `OnControl(map, left, top, right, bottom)` reports on a
+         * rectangle -- an actor's base, which is what almost every call
+         * wants.  `OnControl(map, x, y)` asks about a single point, and
+         * falling through to the actor branch with an x coordinate
+         * where an object was expected resolved nothing and answered
+         * "no control colours here" every time.
+         *
+         * Camelot's map is driven entirely by that short form: `rm1`
+         * reads the control colour under Arthur to work out which part
+         * of Britain he is standing on.  Always hearing 0 back, it
+         * decided he had wandered out of the region he started in and
+         * walked him back to where he began -- so the map let him move
+         * a few steps in any direction and then pulled him home again.
+         *
+         * The first argument selects the map; only the control one is
+         * ever asked for here.
+         */
+        if (args.length >= 5) {
           const x1 = s16(u16(a1)), y1 = s16(u16(args[2]));
-          const x2 = s16(u16(args[3] ?? a1)), y2 = s16(u16(args[4] ?? args[2]));
+          const x2 = s16(u16(args[3])), y2 = s16(u16(args[4]));
           return this.controlBits(Math.min(x1, x2), Math.min(y1, y2),
                                   Math.max(x1, x2) + 1, Math.max(y1, y2) + 1);
+        }
+        if (args.length >= 3) {
+          const x = s16(u16(a1)), y = s16(u16(args[2]));
+          return this.controlBits(x, y, x + 1, y + 1);
         }
         const o = this.resolveTarget(null, a1);
         if (!o) return 0;
