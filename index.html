@@ -56,6 +56,8 @@
            border:0;padding:0;z-index:1}
   #speed{position:fixed;top:8px;right:180px;z-index:5;opacity:.25}
   #speed:hover,#speed:focus{opacity:1}
+  #dither{position:fixed;top:8px;right:330px;z-index:5;opacity:.25}
+  #dither:hover{opacity:1}
   #mic{position:fixed;top:8px;right:60px;z-index:5;opacity:.25}
   #mic:hover{opacity:1}
   #mic.on{opacity:1;border-color:var(--accent);color:var(--accent)}
@@ -90,6 +92,7 @@
   <option value="60">60 cps — fast</option>
   <option value="600">skip intro — as fast as it will go</option>
 </select>
+<button id="dither" hidden title="how the EGA's dither pairs are shown: blended into one colour, or alternating as the hardware did">▦ blended</button>
 <button id="mic" hidden title="put the cursor in the dictation field, then press fn twice">🎤 dictation</button>
 <button id="quit" hidden>exit</button>
 <div id="hud" hidden></div>

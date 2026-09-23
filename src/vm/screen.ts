@@ -127,8 +127,16 @@ export class Screen {
   private get nothingProtected() { return !this.windows.length && !this.overlays.length; }
   /** Set when the picture changes, so the host knows to repaint. */
   dirty = true;
-  /** Undithering is a display choice, not a drawing one. */
-  undither = false;
+  /**
+   * Blend each dither pair into one colour instead of alternating it.
+   *
+   * A display choice, not a drawing one: the planes keep the pair byte
+   * the hardware wrote, and only `rgb` decides what to make of it.  On
+   * by default, because the alternating pattern was a way of faking
+   * colours the EGA did not have on a screen that smeared them
+   * together, and a modern display shows it as a chequerboard instead.
+   */
+  undither = true;
 
   drawPic(pic: Picture, clear = true) {
     this.overlays.length = 0;
@@ -292,7 +300,8 @@ export class Screen {
   rgb(out = new Uint8Array(WIDTH * SCREEN_HEIGHT * 3)): Uint8Array {
     for (let y = 0; y < STATUS_HEIGHT; y++)
       for (let x = 0; x < WIDTH; x++) {
-        const c = EGA_RGB[ditherPixel(this.statusBar[y * WIDTH + x], x, y)];
+        const v = this.statusBar[y * WIDTH + x];
+        const c = this.undither ? BLENDED_RGB[v] : EGA_RGB[ditherPixel(v, x, y)];
         const o = (y * WIDTH + x) * 3;
         out[o] = c[0]; out[o + 1] = c[1]; out[o + 2] = c[2];
       }

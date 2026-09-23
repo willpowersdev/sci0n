@@ -261,6 +261,7 @@ function stopPlay() {
   field.hidden = true;
   ($('mic') as HTMLElement).hidden = true;
   ($('speed') as HTMLElement).hidden = true;
+  ($('dither') as HTMLElement).hidden = true;
   cv.removeEventListener('mousedown', grabFocus);
   if (current) render();
 }
@@ -363,6 +364,29 @@ function startPlay() {
   const field = $('dictate') as HTMLInputElement;
   field.addEventListener('input', onDictate);
   ($('mic') as HTMLElement).hidden = false;
+  /**
+   * How the EGA's dither pairs are shown.
+   *
+   * The games drew pairs of colours in a chequerboard to fake shades
+   * the palette did not have, counting on a monitor that blurred them
+   * together.  A modern screen does not, so the pattern is shown rather
+   * than the colour it stood for; blending the pair is the default and
+   * the toggle puts the original back.
+   */
+  const dither = $('dither') as HTMLButtonElement;
+  dither.hidden = false;
+  const showDither = () => {
+    dither.textContent = s.screen.undither ? '▦ blended' : '▦ dithered';
+  };
+  showDither();
+  dither.onclick = () => {
+    if (!session) return;
+    session.screen.undither = !session.screen.undither;
+    session.screen.dirty = true;
+    showDither();
+    grabFocus();
+  };
+
   const speed = $('speed') as HTMLSelectElement;
   speed.hidden = false;
   s.cyclesPerSecond = Number(speed.value) || 20;
