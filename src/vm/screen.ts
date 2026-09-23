@@ -189,7 +189,18 @@ export class Screen {
     return this.hist.counts;
   }
 
-  drawPic(pic: Picture, clear = true) {
+  /**
+   * Lay a picture into the background.
+   *
+   * `reveal` says whether the screen is to show it yet.  SCI keeps the
+   * two apart: `DrawPic` composes the picture into the background
+   * straight away and raises `picNotValid`, and the screen catches up
+   * on the next `Animate`.  That gap matters because the room's `init`
+   * runs inside it, and `init` asks the control plane where the ego may
+   * stand -- so the planes have to be the new room's even though the
+   * screen still shows the old one.
+   */
+  drawPic(pic: Picture, clear = true, reveal = true) {
     this.picEpoch++;
     // A new picture is a new room: nothing held over from the old one
     // has any business keeping the picture off the screen.  A window a
@@ -203,6 +214,11 @@ export class Screen {
     this.bgVisual.set(pic.visual);
     this.bgPriority.set(pic.priority);
     this.control.set(pic.control);
+    if (reveal) this.reveal();
+  }
+
+  /** Put the background on the screen, which is what `Animate` does. */
+  reveal() {
     this.restore();
     this.dirty = true;
   }

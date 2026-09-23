@@ -22,6 +22,17 @@
  *
  * So this walks, rather than placing the ego past the line and calling
  * that a test: placing it there passed throughout.
+ *
+ * Arriving matters as much as leaving.  The map puts the ego back at
+ * the place it came from -- `rm1::init` reads a pair of tables indexed
+ * by which room that was, and Merlin's tower is 238,64 -- and it does
+ * that inside `init`, which runs before the next `Animate`.  `Act::posn`
+ * asks the control plane whether the spot it was given is one the ego
+ * may stand on, and if not `Act::findPosn` spirals outward looking for
+ * somewhere better.  With the picture's planes still those of the room
+ * just left, every answer was wrong, the spiral never found anything,
+ * and it wandered off the edge of the picture: Arthur appeared off
+ * screen at 303,-1 and walked in from there.
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -31,10 +42,14 @@ import { Session } from '../src/vm/session.ts';
 import { ROOT } from './games.ts';
 
 const DOWN = 0x5000, RIGHT = 0x4D00;
-/** Where each room lets you out, and which way you have to walk. */
+/**
+ * Where each room lets you out, which way you have to walk, and where
+ * the map puts you down -- `rm1::init`'s tables, indexed by where you
+ * came from.
+ */
 const EXITS = [
-  { room: 2, name: "Merlin's room", key: DOWN, to: 1 },
-  { room: 6, name: "Gwenhyver's bower", key: RIGHT, to: 1 },
+  { room: 2, name: "Merlin's room", key: DOWN, to: 1, lands: [238, 64] },
+  { room: 6, name: "Gwenhyver's bower", key: RIGHT, to: 1, lands: [182, 57] },
 ];
 /** Export 0 of script 0 is the game object, and its newRoom is here. */
 const NEW_ROOM = 2530;
@@ -134,6 +149,21 @@ for (const exit of EXITS) {
   check(left,
     `${exit.name}: walked out to room ${exit.to} ` +
     `(from ${from}, ended at ${where}, picture ${picture()})`);
+  if (!left) continue;
+
+  /**
+   * And landed where the map meant to put him.
+   *
+   * Read on the first cycle after the room appears: the map walks the
+   * ego on from here by itself, which is the sequence the game plays,
+   * so a later reading would be of the walk rather than of the arrival.
+   */
+  const [wx, wy] = exit.lands;
+  const ax = vm.prop(e, 'x'), ay = vm.prop(e, 'y');
+  check(ax === wx && ay === wy,
+    `${exit.name}: arrived at ${ax},${ay}, where the map puts him (${wx},${wy})`);
+  check(ax >= 0 && ax < 320 && ay >= 0 && ay < 190,
+    `${exit.name}: arrived on the screen, not off it`);
 }
 
 /**

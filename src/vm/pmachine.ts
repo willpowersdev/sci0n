@@ -1270,23 +1270,16 @@ export class PMachine {
   animateStats = { calls: 0, doits: 0, max: 0, drawn: 0, names: new Set<string>() };
   /** Priority bands of the current picture. */
   picBands = [42, 53, 64, 74, 85, 95, 106, 116, 127, 138, 148, 159, 169, 180];
-  /** A picture asked for but not yet drawn, and the flag that says so. */
-  private pendingPic: { pic: Picture; clear: boolean; number: number } | null = null;
+  /** True while a picture is laid in but not yet on the screen. */
+  private pendingPic = false;
   picNotValid = 0;
 
-  /** Paint a picture that has been waiting, if one has. */
+  /** Show a picture that has been waiting, if one is. */
   private showPendingPic() {
-    const p = this.pendingPic;
-    if (!p) return;
-    this.pendingPic = null;
+    if (!this.pendingPic) return;
+    this.pendingPic = false;
     this.picNotValid = 0;
-    this.screen.drawPic(p.pic, p.clear);
-    // The saved pixels those windows were holding belong to the picture
-    // that has just gone; putting them back later would paint the old
-    // room over the new one.
-    this.windows.clear();
-    this.picBands = p.pic.priorityBands ?? this.picBands;
-    this.currentPic = p.number;
+    this.screen.reveal();
   }
 
 
@@ -1544,9 +1537,30 @@ export class PMachine {
         const d = this.game.tryData('pic', a0);
         if (!d) return 0;
         try {
-          // The third argument asks to add to the picture already
-          // there; without it the screen is cleared first.
-          this.pendingPic = { pic: new Picture(d), clear: (args[2] ?? 0) === 0, number: a0 };
+          /**
+           * Composed now, shown later.
+           *
+           * The third argument asks to add to the picture already
+           * there; without it the screen is cleared first.  Only the
+           * showing waits: the room's `init` runs before the next
+           * `Animate` and asks the control plane where to put the ego,
+           * and it has to be asking about the room it is entering.
+           * Leaving the planes behind meant every answer came from the
+           * room just left -- Camelot's map said the spot it had chosen
+           * for Arthur was solid rock, and `Act::findPosn` spiralled
+           * outward looking for somewhere better until it wandered off
+           * the edge of the picture, which is how he arrived off screen
+           * and walked in.
+           */
+          const pic = new Picture(d);
+          this.screen.drawPic(pic, (args[2] ?? 0) === 0, false);
+          // The saved pixels any window was holding belong to the
+          // picture that has just gone; putting them back later would
+          // paint the old room over the new one.
+          this.windows.clear();
+          this.picBands = pic.priorityBands ?? this.picBands;
+          this.currentPic = a0;
+          this.pendingPic = true;
           this.picNotValid = 1;
         } catch { /* a picture that will not decode leaves the last one */ }
         return 0;
