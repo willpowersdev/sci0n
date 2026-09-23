@@ -78,6 +78,8 @@ export class Screen {
    * rather than printing on top of it.
    */
   clearStaleOverlays() {
+    if (!this.overlays.length) return;
+    this.maskStale = true;
     const keep: typeof this.overlays = [];
     for (const o of this.overlays) {
       if (o.epoch === this.epoch) { keep.push(o); continue; }
@@ -91,14 +93,38 @@ export class Screen {
     this.dirty = true;
   }
 
-  /** Is this pixel underneath an open window? */
-  private covered(x: number, y: number): boolean {
-    for (const w of this.windows)
-      if (x >= w.x0 && x < w.x1 && y >= w.y0 && y < w.y1) return true;
-    for (const w of this.overlays)
-      if (x >= w.x0 && x < w.x1 && y >= w.y0 && y < w.y1) return true;
-    return false;
+  /**
+   * Which pixels are spoken for, as a mask.
+   *
+   * Asked once per pixel of every cel drawn and of every restore, so it
+   * cannot be a walk of two lists: with a dialog open nothing animates,
+   * the list of written text grows with every cycle, and the cost per
+   * pixel grows with it.  That took the game to under a frame a second.
+   */
+  private mask = new Uint8Array(WIDTH * HEIGHT);
+  private maskStale = true;
+
+  /** Say the protected regions have changed. */
+  protectionChanged() { this.maskStale = true; }
+
+  private rebuildMask() {
+    this.maskStale = false;
+    this.mask.fill(0);
+    for (const list of [this.windows, this.overlays])
+      for (const w of list)
+        for (let y = Math.max(0, w.y0); y < Math.min(HEIGHT, w.y1); y++) {
+          const row = y * WIDTH;
+          for (let x = Math.max(0, w.x0); x < Math.min(WIDTH, w.x1); x++) this.mask[row + x] = 1;
+        }
   }
+
+  private covered(x: number, y: number): boolean {
+    if (this.maskStale) this.rebuildMask();
+    return this.mask[y * WIDTH + x] === 1;
+  }
+
+  /** True when nothing is protected, so the fast paths can be taken. */
+  private get nothingProtected() { return !this.windows.length && !this.overlays.length; }
   /** Set when the picture changes, so the host knows to repaint. */
   dirty = true;
   /** Undithering is a display choice, not a drawing one. */
@@ -106,6 +132,7 @@ export class Screen {
 
   drawPic(pic: Picture, clear = true) {
     this.overlays.length = 0;
+    this.maskStale = true;
     if (clear) { this.bgVisual.fill(0xFF); this.bgPriority.fill(0); this.control.fill(0); }
     this.bgVisual.set(pic.visual);
     this.bgPriority.set(pic.priority);
@@ -118,7 +145,8 @@ export class Screen {
   restore() {
     this.epoch++;
     this.priority.set(this.bgPriority);
-    if (!this.windows.length && !this.overlays.length) { this.visual.set(this.bgVisual); return; }
+    if (this.nothingProtected) { this.visual.set(this.bgVisual); return; }
+    if (this.maskStale) this.rebuildMask();
     // Everything but what an open window is showing.
     for (let y = 0; y < HEIGHT; y++) {
       const row = y * WIDTH;
@@ -159,7 +187,7 @@ export class Screen {
         const i = py * WIDTH + px;
         if (priority < pri[i]) continue;
         // A sprite is behind an open window, never over it.
-        if (vis === this.visual && this.covered(px, py)) continue;
+        if (vis === this.visual && !this.nothingProtected && this.covered(px, py)) continue;
         // A cel index is one colour; the pair byte keeps the renderer's
         // two paths identical for pictures and for sprites.
         vis[i] = v < 16 ? ((v << 4) | v) : v;

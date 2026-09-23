@@ -1622,6 +1622,7 @@ export class PMachine {
         // While it is open the picture is not painted back over it.
         const area = { x0, y0, x1, y1 };
         this.screen.windows.push(area);
+        this.screen.protectionChanged();
         this.windows.set(h, { rect: saved, port, area });
         this.ports.push(port);
         return h;
@@ -1630,7 +1631,7 @@ export class PMachine {
         const w = this.windows.get(a0);
         if (w) {
           const cover = this.screen.windows.indexOf(w.area);
-          if (cover >= 0) this.screen.windows.splice(cover, 1);
+          if (cover >= 0) { this.screen.windows.splice(cover, 1); this.screen.protectionChanged(); }
           this.screen.restoreRect(w.rect);
           this.windows.delete(a0);
           const i = this.ports.lastIndexOf(w.port);
@@ -2107,6 +2108,7 @@ export class PMachine {
     this.screen.overlays.push({ x0: p.x + x, y0: p.y + y,
                                 x1: Math.min(WIDTH, p.x + p.w), y1: bottom,
                                 epoch: this.screen.epoch });
+    this.screen.protectionChanged();
     return 0;
   }
 
