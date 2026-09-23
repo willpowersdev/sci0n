@@ -2010,9 +2010,20 @@ export class PMachine {
             if (this.sounds.sci01) this.sounds.pause(a1, !!(args[2] ?? 1));
             else this.sounds.pause(0, !!a1);
             return 0;
-          case 'mute':
-            if (args.length > 1) this.sounds.setMuted(!!a1);
-            return this.sounds.muted ? 1 : 0;
+          /**
+           * Sound on or off.
+           *
+           * The argument is whether sound is *on*, not whether it is
+           * muted, and reading this back is the same question -- which
+           * is how a menu bar draws a tick beside "Sound".  Taking it
+           * the other way round silenced Camelot from its intro
+           * onwards: `Intro::init` turns sound on with `DoSound(4, 1)`
+           * and then starts the music, so reading that as "mute" left
+           * every piece after the title screen playing at zero gain.
+           */
+          case 'soundOn':
+            if (args.length > 1) this.sounds.setMuted(!a1);
+            return this.sounds.muted ? 0 : 1;
           case 'masterVolume':
             if (args.length > 1) this.sounds.setMasterVolume(a1);
             return this.sounds.masterVolume;

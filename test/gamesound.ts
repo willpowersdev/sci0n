@@ -32,7 +32,7 @@ function nodeSource(dir: string): ResourceSource {
 /** Games that reach music today; if one stops asking, something broke. */
 const MUST_PLAY = new Set(['SQ3', 'CAMELOT', 'COLONEL']);
 
-let heard = 0, asking = 0, failed = 0;
+let heard = 0, asking = 0, failed = 0, checked = false;
 for (const name of ['SQ3', 'CAMELOT', 'LSL2', 'COLONEL', 'QFG2']) {
   const g = new Game(nodeSource(join(ROOT, name)));
   const s = new Session(g, new Index(g));
@@ -78,5 +78,51 @@ for (const name of ['SQ3', 'CAMELOT', 'LSL2', 'COLONEL', 'QFG2']) {
     `${String(plays).padStart(2)} plays (sounds ${[...new Set(asked)].slice(0, 6).join(',') || '-'}) · ` +
     `${secs.padStart(5)}s mixed · peak ${peak.toFixed(3)} · ${verdict}`);
 }
-console.log(`\n${heard}/${asking} games that asked for music were heard playing it`);
+/**
+ * Does the music survive the title screen?
+ *
+ * The check above is satisfied by any audible piece, and the title
+ * music is the first thing every game plays -- so a game that falls
+ * silent for everything after it still passed.  Camelot did exactly
+ * that: `Intro::init` calls `DoSound(4, 1)`, whose argument says
+ * whether sound is *on*.  Read as "mute", it turned the sound off just
+ * before the intro started its own music, and every piece from there
+ * to the end of the game mixed at zero gain while the driver happily
+ * reported it playing.
+ *
+ * So this follows Camelot past the title sequence and insists on audio
+ * from a piece that starts later, which is the part no first-piece
+ * check can see.
+ */
+{
+  const g = new Game(nodeSource(join(ROOT, 'CAMELOT')));
+  const s = new Session(g, new Index(g));
+  let clock = 0;
+  s.now = () => clock;
+  const box = s.vm.sounds;
+  const buf = new Float32Array(2048);
+  let st = s.tick();
+  let titlePeak = 0, introPeak = 0, introPlays = 0;
+  // The title sequence runs about a minute; Enter takes the menu on.
+  for (let i = 0; i < 7000 && st.running; i++) {
+    if (i === 3300) s.key(0x0D);
+    clock += 1000 / 60;
+    st = s.tick();
+    if (!box.active) continue;
+    box.mix(buf);
+    let p = 0;
+    for (const v of buf) p = Math.max(p, Math.abs(v));
+    if (i < 3300) titlePeak = Math.max(titlePeak, p);
+    else { introPeak = Math.max(introPeak, p); if (p > 0.02) introPlays++; }
+  }
+  const ok = introPeak > 0.02;
+  checked = ok;
+  if (!ok) failed++;
+  console.log(`CAMELOT   title peak ${titlePeak.toFixed(3)} · after the title screen peak ` +
+    `${introPeak.toFixed(3)} over ${introPlays} blocks` +
+    `${ok ? '' : ' -- WENT SILENT ONCE THE INTRO BEGAN'}`);
+}
+
+console.log(`\n${heard}/${asking} games that asked for music were heard playing it` +
+  `${checked ? ', and Camelot kept playing past its title screen' : ''}`);
 process.exit(failed ? 1 : 0);

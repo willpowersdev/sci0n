@@ -25,7 +25,7 @@ import { Player } from '../opl/player.ts';
 import { OPL_RATE } from '../opl/opl2.ts';
 
 export type SndVerb =
-  | 'init' | 'play' | 'dispose' | 'stop' | 'pause' | 'mute' | 'masterVolume'
+  | 'init' | 'play' | 'dispose' | 'stop' | 'pause' | 'soundOn' | 'masterVolume'
   | 'update' | 'fade' | 'getPolyphony' | 'stopAll' | 'check' | 'hold'
   | 'sendMidi' | 'restore' | 'resume';
 
@@ -36,7 +36,7 @@ export type SndVerb =
  * volume live.
  */
 const SCI0_VERBS: Record<number, SndVerb> = {
-  0: 'init', 1: 'play', 2: 'restore', 3: 'dispose', 4: 'mute', 5: 'stop',
+  0: 'init', 1: 'play', 2: 'restore', 3: 'dispose', 4: 'soundOn', 5: 'stop',
   6: 'pause', 7: 'resume', 8: 'masterVolume', 9: 'update', 10: 'fade',
   11: 'getPolyphony', 12: 'stopAll',
 };
@@ -51,7 +51,7 @@ const SCI0_VERBS: Record<number, SndVerb> = {
  * send 12, hold 14, and changeState's update at 4.
  */
 const SCI01_VERBS: Record<number, SndVerb> = {
-  0: 'masterVolume', 1: 'mute', 4: 'update', 5: 'init', 6: 'dispose',
+  0: 'masterVolume', 1: 'soundOn', 4: 'update', 5: 'init', 6: 'dispose',
   7: 'play', 8: 'stop', 9: 'pause', 10: 'fade', 11: 'check',
   12: 'sendMidi', 14: 'hold',
 };
