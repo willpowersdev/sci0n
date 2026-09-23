@@ -111,7 +111,16 @@ export class Session {
     this.vm.mouseX = x; this.vm.mouseY = y;
     this.vm.events.push({ type, message: 0, modifiers: 0, x, y });
   }
-  move(x: number, y: number) { this.vm.mouseX = x; this.vm.mouseY = y; }
+  /**
+   * Where the pointer is.
+   *
+   * The screen needs it too, because the cursor is composited at
+   * render time rather than drawn into the picture.
+   */
+  move(x: number, y: number) {
+    this.vm.mouseX = x; this.vm.mouseY = y;
+    this.screen.cursorX = x; this.screen.cursorY = y;
+  }
 
   /** Run one frame's worth of the game. */
   tick(): SessionStatus {

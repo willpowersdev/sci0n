@@ -16,6 +16,7 @@ import type { Cel } from '../view.ts';
 import type { Font } from '../font.ts';
 import { EGA_RGB, BLENDED_RGB, ditherPixel } from '../ega.ts';
 import { histogram } from '../undither.ts';
+import { Cursor, CURSOR_SIZE, CURSOR_CLEAR } from '../font.ts';
 
 export { WIDTH, HEIGHT };
 /** The status line sits above the picture; SCI0 reserves ten rows. */
@@ -138,6 +139,19 @@ export class Screen {
    * together, and a modern display shows it as a chequerboard instead.
    */
   undither = true;
+
+  /**
+   * The game's own pointer.
+   *
+   * SCI draws the cursor over everything and never into the picture --
+   * it is the hardware's, not the scene's -- so this is composited at
+   * render time and the planes never see it.  Baking it in would leave
+   * a trail of arrows behind every move.
+   */
+  cursor: Cursor | null = null;
+  cursorVisible = false;
+  cursorX = 0;
+  cursorY = 0;
 
   /**
    * Bumped whenever the background changes.
@@ -467,6 +481,29 @@ export class Screen {
         const c = this.undither ? BLENDED_RGB[v] : EGA_RGB[ditherPixel(v, x, y)];
         const o = ((y + top) * WIDTH + x) * 3;
         out[o] = c[0]; out[o + 1] = c[1]; out[o + 2] = c[2];
+      }
+    }
+    // Last, and straight into the output: the pointer sits over the
+    // status line as readily as over the picture, and belongs to
+    // neither.  Its own colours are flat black and white, never a
+    // dither pair, so they are written as they are.
+    const cur = this.cursor;
+    if (cur && this.cursorVisible) {
+      const left = this.cursorX - cur.hotspotX;
+      const topY = this.cursorY - cur.hotspotY + top;
+      const height = this.displayHeight;
+      for (let y = 0; y < CURSOR_SIZE; y++) {
+        const py = topY + y;
+        if (py < 0 || py >= height) continue;
+        for (let x = 0; x < CURSOR_SIZE; x++) {
+          const p = cur.pixels[y * CURSOR_SIZE + x];
+          if (p === CURSOR_CLEAR) continue;
+          const px = left + x;
+          if (px < 0 || px >= WIDTH) continue;
+          const c = EGA_RGB[p & 0x0F];
+          const o = (py * WIDTH + px) * 3;
+          out[o] = c[0]; out[o + 1] = c[1]; out[o + 2] = c[2];
+        }
       }
     }
     return out;

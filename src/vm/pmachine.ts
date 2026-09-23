@@ -21,7 +21,7 @@ import { decode } from '../disasm.ts';
 import { SpeciesTable } from './heap.ts';
 import { View, type Cel } from '../view.ts';
 import { Picture } from '../pic.ts';
-import { Font } from '../font.ts';
+import { Font, Cursor } from '../font.ts';
 import { strings as textStrings } from '../text.ts';
 import { Screen, WIDTH, HEIGHT } from './screen.ts';
 import { SoundBox, SIGNAL_FINISHED } from './sounds.ts';
@@ -274,6 +274,7 @@ export class PMachine {
     }
   }
   private fonts = new Map<number, Font | null>();
+  private cursors = new Map<number, Cursor | null>();
   private selCache = new Map<string, number>();
   /** Strings the kernel made, which scripts hold by handle. */
   private strings = new Map<number, string>();
@@ -1656,8 +1657,30 @@ export class PMachine {
 
       // --- input --------------------------------------------------------
       case 'HaveMouse': return 1;
+      /**
+       * SetCursor(resource [visible x y]).
+       *
+       * The second argument says whether the pointer is shown, not
+       * where it is -- this used to read it as an x coordinate, so a
+       * game hiding its cursor teleported the mouse to column 1
+       * instead.  The position, when given at all, is the third and
+       * fourth.
+       *
+       * Every game keeps its pointer in the same two resources: 999 is
+       * the arrow, and 997 is the one it puts up while it is busy --
+       * an hourglass in most of them, the Grail itself in Camelot.
+       * Showing it is the whole point of the thing, so a player can
+       * tell a game that is loading from one that has stopped.
+       */
       case 'SetCursor': {
-        if (args.length >= 3) { this.mouseX = a1; this.mouseY = args[2] ?? this.mouseY; }
+        this.screen.cursor = this.cursorOf(a0);
+        this.screen.cursorVisible = args.length >= 2 ? a1 !== 0 : true;
+        if (args.length >= 4) {
+          this.mouseX = s16(u16(args[2] ?? 0));
+          this.mouseY = s16(u16(args[3] ?? 0));
+        }
+        this.screen.cursorX = this.mouseX;
+        this.screen.cursorY = this.mouseY;
         return 0;
       }
       case 'GetEvent': {
@@ -2731,6 +2754,17 @@ export class PMachine {
     this.screen.restoreRect(m.rect);
     this.parseMsg = null;
     return true;
+  }
+
+  /** Decoded cursor resource, cached; null when absent or malformed. */
+  private cursorOf(n: number): Cursor | null {
+    if (!this.cursors.has(n)) {
+      const d = n >= 0 ? this.game.tryData('cursor', n) : null;
+      let c: Cursor | null = null;
+      if (d) { try { c = new Cursor(d); } catch { c = null; } }
+      this.cursors.set(n, c);
+    }
+    return this.cursors.get(n) ?? null;
   }
 
   /** Lines of a text resource, cached. */
