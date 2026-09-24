@@ -1582,54 +1582,20 @@ async function openGame(name: string) {
 }
 
 /**
- * What to show before a game is chosen.
- *
- * The server knows which of its folders are games, so the page asks and
- * offers them: requiring `?game=NAME` to be typed by hand made a page
- * that is serving fifteen of them look like it had none. The directory
- * picker stays for browsing a copy the server cannot see, and is the
- * only option when the page is opened from a file rather than served.
- */
-async function showGameList() {
-  let games: string[] = [];
-  const m = await readManifest();
-  if (m) games = Object.keys(m).sort();
-  else {
-    try {
-      const r = await fetch(GAMES);
-      if (r.ok) games = await r.json();
-    } catch { /* opened without a server; the picker is the way in */ }
-  }
-  if (!games.length) {
-    $('gameinfo').textContent = 'no games on this server';
-    return;
-  }
-  $('gameinfo').textContent = `${games.length} games — pick one`;
-  const list = $('list');
-  list.innerHTML = '';
-  for (const name of games) {
-    const d = document.createElement('div');
-    d.className = 'row game';
-    d.textContent = titleOf(name);
-    d.title = name;                     // the folder, for anyone who wants it
-    d.onclick = () => openGame(name);
-    list.append(d);
-  }
-}
-
-/**
  * The games the server has, in a menu that stays put.
  *
- * `showGameList` fills the sidebar's list, but that list is the
- * resource browser as soon as a game is open, so once you had picked
- * one there was no way back to the others and the folder chooser --
- * which is for a copy the server cannot see -- looked like the only
- * way to change games.  This sits in the header instead and is filled
- * once, whether a game is open or not.
+ * The sidebar below it belongs to the resource browser as soon as a
+ * game is open, so a list of games there could only be the landing
+ * page's and vanished the moment it was used.  The menu is in the
+ * header and is filled once, whether a game is open or not, so it is
+ * the way in and the way between.
+ *
+ * Returns what it offered, so the caller can say how many there are
+ * without asking the server twice.
  */
-async function fillGameMenu() {
+async function fillGameMenu(): Promise<string[]> {
   const sel = $('games') as HTMLSelectElement | null;
-  if (!sel) return;
+  if (!sel) return [];
   let games: string[] = [];
   const m = await readManifest();
   if (m) games = Object.keys(m).sort();
@@ -1639,7 +1605,7 @@ async function fillGameMenu() {
       if (r.ok) games = await r.json();
     } catch { /* opened without a server; the chooser is the way in */ }
   }
-  if (!games.length) return;                    // nothing served; stay hidden
+  if (!games.length) return games;              // nothing served; stay hidden
   const open = new URLSearchParams(location.search).get('game');
   for (const name of games) {
     const o = document.createElement('option');
@@ -1657,12 +1623,15 @@ async function fillGameMenu() {
     history.replaceState(null, '', `?game=${encodeURIComponent(name)}`);
     openGame(name);
   };
+  return games;
 }
 
 (async () => {
   const q = new URLSearchParams(location.search);
   const name = q.get('game');
-  await fillGameMenu();
+  const games = await fillGameMenu();
   if (name) await openGame(name);
-  else await showGameList();
+  else $('gameinfo').textContent = games.length
+    ? `${games.length} games — choose one above`
+    : 'no games on this server';
 })();
