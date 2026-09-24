@@ -164,7 +164,20 @@ const ALIASES: Readonly<Record<string, string>> = {
   conga: 'Melodic Tom', snare: 'Synth Drum', picsnare: 'Synth Drum',
   steeldrm: 'Steel Drums', squrwave: 'Lead 1 (square)', bell: 'Tinkle Bell',
   clangbell: 'Tubular Bells', revcymb: 'Reverse Cymbal', tom: 'Melodic Tom',
-  // The few effects General MIDI does carry.
+  /**
+   * The few effects General MIDI does carry.
+   *
+   * The line drawn here is whether the sound set has something that is
+   * actually the same *kind* of sound, not whether the timbre's name
+   * looks like an instrument.  Coins are a case the first cut of this
+   * table got wrong: "Coins   MS" was left unmapped with the swords and
+   * the horses, on the rule that a wrong instrument is worse than a
+   * silent one -- but a purse of coins is a bright pitched metal
+   * chime, which is exactly what Tinkle Bell is, and dropping it left
+   * Camelot's purse opening in silence.  The rule holds for a horse;
+   * it does not hold for anything GM can really make.
+   */
+  coins: 'Tinkle Bell',
   telephone: 'Telephone Ring', birdtweet: 'Bird Tweet', ratsqueek: 'Bird Tweet',
   ocean: 'Seashore', wtrfall: 'Seashore', splash: 'Seashore', bubbles: 'Seashore',
   wind: 'Seashore', applause: 'Applause', explode: 'Gunshot', firedart: 'Gunshot',

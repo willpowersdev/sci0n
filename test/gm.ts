@@ -20,6 +20,15 @@
  * The stream.  Channel 15 is how the score talks to the game and must
  * not reach the synthesiser; neither must the controllers Sierra used
  * for its own purposes, which a GM synthesiser would act on.
+ *
+ * And the line between the two, which is the part that was drawn in the
+ * wrong place.  "A wrong instrument is worse than a silent one" is
+ * right for a horse or a castle gate, and wrong for anything the sound
+ * set can really make: Camelot's purse plays sound 21, whose only
+ * patch is "Coins   MS", and leaving that unmapped dropped both its
+ * channels and opened the purse in silence.  The test below follows
+ * that sound all the way from the patch bank to the notes that come
+ * out, because every step of it looked reasonable on its own.
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -163,6 +172,32 @@ check(division === 60, `the division is 60 ticks to the quarter (${division})`);
 check(tick === title.ticks,
   `the file ends where the score does, ${tick} ticks vs ${title.ticks}`);
 check(notes > 500, `${notes} note-ons survived the round trip`);
+
+// --- a sound effect that GM can really make -----------------------------
+console.log('\neffects:');
+{
+  /** Camelot's purse: `purseSound` plays this when a coin is picked. */
+  const CLINK = 21;
+  const snd = parseSound(g.data(4, CLINK), hdr)!;
+  const patches = [...new Set(snd.events
+    .filter(e => (e.status & 0xF0) === 0xC0 && (e.status & 0x0F) !== CONTROL_CHANNEL)
+    .map(e => e.a))];
+  const names = patches.map(p => timbreNameOf(bank, bank.patches[p]));
+  check(names.some(n => /coin/i.test(n)),
+    `sound ${CLINK} is the coins (patches ${patches.join(',')} = ${names.map(n => JSON.stringify(n)).join(' ')})`);
+  for (const p of patches)
+    check(map[p] !== UNMAPPED,
+      `patch ${p} ${JSON.stringify(timbreNameOf(bank, bank.patches[p]))} has an instrument` +
+      ` (${map[p] === UNMAPPED ? 'none' : GM_NAMES[map[p]]})`);
+  /**
+   * And it must actually sound.  A mapping that exists is not the same
+   * as notes coming out: the channels are dropped wholesale when their
+   * patch has no instrument, so this asks the stream, not the table.
+   */
+  const ev = toGeneralMidi(snd, map);
+  const notes = ev.filter(e => (e.status & 0xF0) === 0x90 && e.b > 0).length;
+  check(notes > 0, `the purse clink is audible (${notes} notes survive the translation)`);
+}
 
 console.log(`\n${checked - failed}/${checked} General MIDI checks passed`);
 process.exit(failed ? 1 : 0);
