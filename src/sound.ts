@@ -64,10 +64,13 @@ const SIGNAL_STATUS = 0xC0 | SIGNAL_CHANNEL;
  * The signal that marks the loop point instead of cueing the script.
  *
  * SCI0-late and everything after it keep this one to themselves; only
- * the earliest SCI0 passed it on.  (ScummVM also lets it through for
- * KQ4's sound 106, whose scripts wait on signal 127 because Sierra
- * changed the driver without updating them -- untested here, as KQ4
- * does not yet reach its title.)
+ * the earliest SCI0 passed it on as well, and its games were written
+ * expecting to hear it.  KQ4's opening music is one: its cues run
+ * 47 up to 93, with a 127 sitting between 86 and 88, and the room that
+ * ends the intro will not look for 93 until it has seen that 127 go
+ * past.  Swallowed here, the scene waited a second, asked again, and
+ * went on doing that -- so the intro never finished and the player
+ * never got control of Rosella.
  */
 const SIGNAL_LOOP = 127;
 
@@ -124,7 +127,8 @@ export function detectHeaderSize(datas: Uint8Array[]): number {
   return best;
 }
 
-export function parseSound(d: Uint8Array, header?: number): Sound | null {
+export function parseSound(d: Uint8Array, header?: number,
+                           keepLoopSignal = false): Sound | null {
   const h = header ?? headerSize(d);
   if (h < 0 || !scan(d, h, null).ok) return null;
   const channelCount = (h - 1) / 2;
@@ -150,7 +154,12 @@ export function parseSound(d: Uint8Array, header?: number): Sound | null {
   let loopTick: number | null = null;
   for (const e of events) {
     if (e.status !== SIGNAL_STATUS) continue;
-    if (e.a === SIGNAL_LOOP) { loopTick ??= e.tick; continue; }
+    if (e.a === SIGNAL_LOOP) {
+      loopTick ??= e.tick;
+      // Still the loop point; whether the script hears about it too is
+      // the caller's to say, because it turns on how old the game is.
+      if (!keepLoopSignal) continue;
+    }
     cues.push({ tick: e.tick, signal: e.a });
   }
   return { channelCount, channels, events, ticks: r.tick, digital, cues, loopTick };

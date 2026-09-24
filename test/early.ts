@@ -382,6 +382,49 @@ console.log('\nthe scene the intro used to stop at');
     : 'IT NEVER MOVES ON');
 }
 
+console.log('\nthe signal that ends the intro');
+{
+  const g = new Game(nodeSource(dirOf('kq4sci', 'KQ4')));
+  const idx2 = new Index(g);
+  const s = new Session(g, idx2);
+  let clock = 0;
+  s.now = () => clock;
+  const vm = s.vm as unknown as {
+    objectAt(script: number, ptr: number): object | null;
+    prop(o: unknown, name: string): number;
+  };
+
+  /**
+   * 127 is the loop point, and the earliest SCI0 told the scripts as well.
+   *
+   * KQ4's opening music cues 47 up to 93 with a 127 sitting between 86
+   * and 88, and the room that closes the intro will not start looking
+   * for 93 until it has seen that 127 go past.  Kept back -- as every
+   * later game expects it to be -- the scene waited a second, asked
+   * again, and went on doing that: the intro never ended, so the game
+   * never gave the player control and Rosella could not be moved or
+   * spoken to.
+   *
+   * The room's own state machine is the measure.  It climbs to 30,
+   * where it waits, and reaching 32 is the end of the intro.
+   */
+  const actions = () => vm.objectAt(222, 3998 + 12);
+  let st = s.tick();
+  let best = -1, at = 0;
+  for (let i = 0; i < 40_000 && st.running; i++) {
+    clock += 1000 / 60;
+    st = s.tick();
+    const a = actions();
+    if (!a) continue;
+    const n = vm.prop(a, 'state');
+    if (n > best) { best = n; at = i; }
+    if (best >= 32) break;
+  }
+  check(best >= 32,
+    `the closing room reaches state ${best} by ${(at / 60).toFixed(0)}s` +
+    `${best >= 32 ? '' : ' -- IT IS STILL WAITING ON THE MUSIC'}`);
+}
+
 console.log('\nthe intro it plays');
 {
   const g = new Game(nodeSource(dirOf('kq4sci', 'KQ4')));

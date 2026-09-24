@@ -144,9 +144,21 @@ export class SoundBox {
     return (this.sci01 ? SCI01_VERBS : SCI0_VERBS)[subop] ?? null;
   }
 
+  /**
+   * Whether this game hears the loop signal as a cue of its own.
+   *
+   * The earliest SCI0 passed 127 on to the scripts as well as looping
+   * on it, and those games were written expecting it.  `selectorShift`
+   * is the same tell used everywhere else for that era.
+   */
+  private earlySci0 = false;
+
   constructor(game: Game, index?: Index) {
     this.game = game;
-    if (index) { try { this.detectDialect(index); } catch { /* assume SCI0 */ } }
+    if (index) {
+      try { this.detectDialect(index); } catch { /* assume SCI0 */ }
+      this.earlySci0 = index.selectorShift === 1;
+    }
     // The AdLib bank is patch resource 3, and for the earliest games --
     // KQ4 here -- it is inside the driver they shipped with instead.
     try { this.bank = parseBank(game.data(9, 3)); } catch { this.bank = null; }
@@ -215,7 +227,7 @@ export class SoundBox {
     let data: Uint8Array | null = null;
     try { data = this.game.tryData('sound', number); } catch { data = null; }
     if (!data) return;
-    const sound = parseSound(data, this.headerSize());
+    const sound = parseSound(data, this.headerSize(), this.earlySci0);
     if (!sound) return;
     /**
      * A game with no instruments still has to keep time.
