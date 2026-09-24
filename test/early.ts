@@ -69,23 +69,28 @@ console.log('how the game is built');
   check(kq4.kernelName(0) === 'Load', `a named kernel is left alone ("${kq4.kernelName(0)}")`);
 }
 
-console.log('\nthe copy-protection prompt');
+console.log('\nthe prompt the game would have shown');
+/**
+ * Read with the patch table switched off, so this is KQ4 as Sierra
+ * shipped it: the copy-protection prompt, which the three fixes above
+ * are what make workable at all.  It is bypassed in play -- see
+ * src/patches.ts for why -- and that bypass would hide every one of
+ * them, so the fault each was for is reached here directly.
+ */
 {
   const g = new Game(nodeSource(dirOf('kq4sci', 'KQ4')));
-  const idx = new Index(g);
+  const idx = new Index(g, { patch: false });
   const s = new Session(g, idx);
   let clock = 0;
   s.now = () => clock;
   const step = () => { clock += 1000 / 60; return s.tick(); };
 
-  // biome-ignore-start: reaching into the VM to watch what the scripts ask for
   const vm = s.vm as unknown as {
     kernel: (id: number, a: number[], f: unknown) => number;
     resolveTarget: (f: unknown, v: number) => { scriptNo: number } | null;
     prop: (o: unknown, name: string) => number;
     stringAt: (v: number, script?: number) => string;
   };
-  // biome-ignore-end: ---
   const newWindow = idx.kernel.indexOf('NewWindow');
   const drawControl = idx.kernel.indexOf('DrawControl');
   let win: number[] | null = null;
@@ -95,8 +100,7 @@ console.log('\nthe copy-protection prompt');
     if (id === newWindow && !win) win = a.slice(0, 4);
     if (id === drawControl) {
       const o = vm.resolveTarget(null, a[0]);
-      // Only the editable field has a character limit.
-      if (o && vm.prop(o, 'max') > 0) edit = o;
+      if (o && vm.prop(o, 'max') > 0) edit = o;   // only a field has a limit
     }
     return kernel(id, a, f);
   };
@@ -104,56 +108,100 @@ console.log('\nthe copy-protection prompt');
   let st = s.tick();
   for (let i = 0; i < 400 && st.running; i++) st = step();
 
+  /**
+   * The window is sized from its items, each asked for its own
+   * rectangle.  Told nought by all of them it comes out four pixels
+   * square, with the question painted outside it: a black screen with
+   * a white band across the top, which is what this looked like.
+   */
   checked++;
   if (!win) { failed++; console.log('  FAIL no window was opened at all'); }
   else {
     const [top, left, bottom, right] = win as number[];
     const w = right - left, h = bottom - top;
-    // The question is 267 pixels of text; a window that does not hold
-    // it is the four-pixel sliver, whatever else may be wrong.
     const roomy = w >= 200 && h >= 30;
     if (!roomy) failed++;
-    console.log(`  ${roomy ? 'ok  ' : 'FAIL'} the window is ${w}x${h}` +
+    console.log(`  ${roomy ? 'ok  ' : 'FAIL'} it opens ${w}x${h}` +
       `${roomy ? '' : ' -- TOO SMALL TO HOLD THE QUESTION'}`);
   }
-
-  /**
-   * Is it actually on the screen?
-   *
-   * The dialog is painted white on a black picture, so counting white
-   * says how much of it got drawn without having to match glyphs: the
-   * broken window covered about 1400 pixels, a real one covers ten
-   * times that.  White is 0xFF here because the visual plane holds
-   * dither pairs and white is 15 in both nibbles.
-   */
-  let white = 0;
-  for (const c of s.screen.visual) if (c === 0xFF) white++;
-  check(white > 10_000, `${white} pixels of it are painted`);
 
   const field = edit as { scriptNo: number } | null;
   check(field !== null, 'it has a field to type into');
   if (field) {
+    // Reaching the field means the dialog found it, which it does by
+    // asking each item in turn -- the `&rest` that a kernel call in
+    // between must not eat.
     const read = () => vm.stringAt(vm.prop(field, 'text'), field.scriptNo);
     for (const ch of 'unicorn') { s.key(ch.charCodeAt(0)); for (let i = 0; i < 20; i++) st = step(); }
     check(read() === 'unicorn', `typing reaches it -- it holds "${read()}"`);
 
-    /**
-     * Does answering get an answer?
-     *
-     * `copyProtect` compares what was typed a character at a time, so
-     * a comparison that cannot read a character does not merely get
-     * the wrong result -- it gets none, and the game sits there.  The
-     * test is that the machine does a day's work on the answer rather
-     * than idling: the broken build managed about three instructions
-     * a frame, and a real comparison runs into the millions.
-     */
+    // Answering compares character by character with `StrAt`, the
+    // kernel this game calls but does not name.  Without it the
+    // comparison cannot even be wrong: it simply never finishes.
     const before = st.instructions;
     s.key(13);
     for (let i = 0; i < 1500 && st.running; i++) st = step();
     const worked = st.instructions - before;
-    check(worked > 1_000_000, `answering it costs ${(worked / 1e6).toFixed(0)}M instructions of work`);
-    check(st.running, 'and the game is still running afterwards');
+    check(worked > 1_000_000, `answering costs ${(worked / 1e6).toFixed(0)}M instructions of work`);
   }
+}
+
+console.log('\nthe game it runs instead');
+{
+  const g = new Game(nodeSource(dirOf('kq4sci', 'KQ4')));
+  const idx = new Index(g);
+  const s = new Session(g, idx);
+  let clock = 0;
+  s.now = () => clock;
+  const step = () => { clock += 1000 / 60; return s.tick(); };
+
+  /**
+   * A cheap signature of the screen, to tell a picture from a freeze.
+   */
+  const shot = () => {
+    let h = 0;
+    const v = s.screen.visual;
+    for (let i = 0; i < v.length; i += 7) h = (h * 31 + v[i]) | 0;
+    return h;
+  };
+
+  let st = s.tick();
+  const pics = new Set<number>();
+  const screens = new Set<number>();
+  for (let i = 0; i < 4000 && st.running; i++) {
+    st = step();
+    if (st.picture >= 0) pics.add(st.picture);
+    if (i % 400 === 0) screens.add(shot());
+  }
+
+  // 991 is the blank black backdrop the copy-protection room draws, and
+  // for a long time it was the only picture this game ever managed.
+  const real = [...pics].filter(p => p !== 991);
+  check(real.length > 0, `it draws ${real.length ? `picture ${real.join(', ')}` : 'nothing but the blank backdrop'}`);
+
+  /**
+   * Is it a scene, or a screen with a box on it?
+   *
+   * Counted in colours rather than in pixels: the broken build filled
+   * a dialog with white on black and could pass a test that only asked
+   * how much had been painted.  A drawn room uses the palette.
+   */
+  const used = new Set(s.screen.visual);
+  check(used.size >= 8, `${used.size} colours are on the screen`);
+
+  check(screens.size >= 5, `${screens.size} of 10 sampled frames differ -- it is moving`);
+  check(st.running, 'and it is still running');
+
+  /**
+   * The work is the tell.
+   *
+   * Every property send in this game came back zero when the low bit
+   * was not masked off, which does not stop the machine -- it stops
+   * the game, quietly, while the interpreter goes on being busy about
+   * nothing.  A game that is actually playing gets through millions of
+   * instructions in four thousand frames.
+   */
+  check(st.instructions > 500_000, `${(st.instructions / 1000).toFixed(0)}k instructions of it`);
 }
 
 console.log(`\n${checked - failed}/${checked} early-SCI0 checks passed`);

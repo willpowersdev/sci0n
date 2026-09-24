@@ -18,6 +18,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Game, type ResourceSource } from '../src/resources.ts';
+import { Session } from '../src/vm/session.ts';
 import { Index } from '../src/script.ts';
 import { View } from '../src/view.ts';
 import { PATCHES, patchScript } from '../src/patches.ts';
@@ -88,6 +89,29 @@ for (let i = 0; i < raw.length; i++) if (raw[i] !== after[i]) differ++;
 check(differ === 3, `exactly ${differ} bytes differ: the loop's bound and both of the cel's`);
 check((before?.objects.length ?? 0) > 0,
   `script 414 still parses into ${before?.objects.length} objects`);
+
+/**
+ * Does the machine that runs the game see any of this?
+ *
+ * For a long time it did not.  `PMachine.script` read the resource
+ * straight out of the game and built its own copy, so the whole table
+ * was applied to a script only the disassembler ever looked at, and the
+ * checks above -- which test the patching and not the running -- passed
+ * throughout.  Every repair here was dead: the fingerprint bug it is
+ * named for was never actually fixed in play.
+ *
+ * So the bytes are read back out of a running interpreter.
+ */
+const vm = new Session(colonel, new Index(colonel)).vm as unknown as
+  { script(n: number): { data: Uint8Array } | null };
+const live = vm.script(414);
+check(live !== null, 'the interpreter loads script 414');
+if (live) {
+  let same = 0;
+  for (let i = 0; i < after.length; i++) if (live.data[i] === after[i]) same++;
+  check(same === after.length, 'and runs the patched bytes, not the ones on disc');
+  check(live.data[508] !== raw[508], `byte 508 is ${live.data[508]} where the resource has ${raw[508]}`);
+}
 
 console.log(`\n${checked - failed}/${checked} patch checks passed`);
 process.exit(failed ? 1 : 0);

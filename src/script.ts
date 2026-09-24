@@ -202,9 +202,19 @@ export class Index {
   selectorShift = 0;
   private scripts = new Map<number, Script | null>();
   private species = new Map<number, SciObject | null>();
+  /**
+   * Whether the games' own scripts are repaired on the way through.
+   *
+   * On, because the machine runs what this hands it.  Off gives the
+   * bytes Sierra shipped, which is what anything asking what the game
+   * actually does -- a disassembly, a test of the fault a patch is for
+   * -- needs to see.
+   */
+  private readonly patching: boolean;
 
-  constructor(game: Game) {
+  constructor(game: Game, opts: { patch?: boolean } = {}) {
     this.game = game;
+    this.patching = opts.patch ?? true;
     const sel = game.tryData('vocab', SELECTORS);
     if (sel) this.selectors = nameTable(sel);
     const ker = game.tryData('vocab', KERNEL_NAMES);
@@ -259,7 +269,8 @@ export class Index {
     if (!this.scripts.has(number)) {
       const d = this.game.tryData('script', number);
       if (!d) { this.scripts.set(number, null); return null; }
-      const { data, applied } = patchScript(number, d);
+      const { data, applied } = this.patching
+        ? patchScript(number, d) : { data: d, applied: [] };
       this.patched.push(...applied);
       this.scripts.set(number, new Script(data, number));
     }

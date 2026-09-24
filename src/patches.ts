@@ -57,6 +57,33 @@ export const PATCHES: readonly Patch[] = [
     replace: [0x76, 0x38, 0xE7, 0x03],   // push0, pushi 999
     why: "Colonel's Bequest: the fingerprint's cel could overflow view 553",
   },
+  /**
+   * King's Quest 4 asks a question it never manages to ask.
+   *
+   * `copyProtect::doit` formats text 701 line 0, which reads
+   * "...answer the following question:\n\n%s" -- the question itself
+   * arrives as that `%s`, out of a buffer the room is meant to have
+   * filled with one of the ninety-odd it carries in its own script
+   * ("On page 2, what is the fourth word of the first sentence?").
+   * The buffer is empty by the time it is formatted, so what reaches
+   * the screen is the preamble, a colon and nothing at all.  There is
+   * no question to answer and no answer that will do: a wrong one is
+   * refused and asked again, for ever.
+   *
+   * So the game is sent past it.  Script 0 starts play with
+   * `(self newRoom: 701)`, the copy-protection room; room 700 is
+   * where `copyProtect` itself goes when an answer is accepted, so
+   * one byte of that room number is all this changes.  The room is
+   * never entered rather than entered and defeated, which leaves the
+   * question of what `copyProtect` would have done to the rest of the
+   * game where it belongs -- unasked.
+   */
+  {
+    script: 0, at: 632,
+    expect: [0x38, 0xbd, 0x02, 0x54, 0x06, 0x48],   // pushi 701; self 6; ret
+    replace: [0x38, 0xbc, 0x02],                    // pushi 700
+    why: "King's Quest IV: the copy-protection question is never built, so the room is not entered",
+  },
 ];
 
 const matches = (d: Uint8Array, at: number, want: readonly number[]) =>

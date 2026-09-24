@@ -16,7 +16,7 @@
  * than pretend.
  */
 import type { Game } from '../resources.ts';
-import { Script, type SciObject, Index } from '../script.ts';
+import { type Script, type SciObject, Index } from '../script.ts';
 import { decode } from '../disasm.ts';
 import { SpeciesTable } from './heap.ts';
 import { View, type Cel } from '../view.ts';
@@ -354,11 +354,20 @@ export class PMachine {
     if (s0) this.globals.set(Int32Array.from(s0.locals.map(s16)).subarray(0, 1024));
   }
 
+  /**
+   * A script, as the machine should see it.
+   *
+   * Through the index, which is where the games' own scripts are
+   * repaired -- see src/patches.ts.  Reading the resource straight from
+   * the game here, as this did, meant nothing in that table ever
+   * reached the machine that runs the code: the patches were applied to
+   * a copy only the disassembler ever looked at, and the test for them
+   * checked the patching and not the running.
+   */
   script(n: number): Script | null {
     if (!this.scripts.has(n)) {
-      const d = this.game.tryData('script', n);
-      if (!d) return null;
-      const s = new Script(d, n);
+      const s = this.index.script(n);
+      if (!s) return null;
       this.scripts.set(n, s);
       this.locals.set(n, Int32Array.from(s.locals.map(s16)));
     }
