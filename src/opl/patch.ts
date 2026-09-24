@@ -110,29 +110,44 @@ export function applyOp(o: Operator, s: OperatorPatch) {
  * patch resource at all, so without this it has no music.
  *
  * The table is found rather than looked up at a fixed address, so it
- * identifies itself: forty-eight consecutive well-formed records is not
- * something a stretch of 8086 happens to be.  Each is judged on the
- * fields that cannot hold arbitrary values -- two wave selects of two
- * bits, an algorithm bit, three bits of feedback -- and the run has to
- * be the only one in the file, or this is not what was found.  The
- * later driver, whose games carry `patch.003`, has no such run and is
+ * identifies itself -- but it has to be found on the right byte, and
+ * that is harder than it looks.  A first attempt tested only the fields
+ * whose values happen to be narrow, most of which the parser masks
+ * anyway, and settled three bytes early: forty-eight records that all
+ * looked plausible and every one of which read its neighbour's fields.
+ * The instruments came out wrong and the music with them.
+ *
+ * So every field is tested at the width the chip gives it -- two bits
+ * of key-scale level, four of multiplier and of each envelope rate, six
+ * of total level, one apiece for the flags, two for each wave select --
+ * across both operators of all forty-eight records.  That is around
+ * forty numbers per record, and the count of records that pass tells
+ * one alignment from another: only the true one has all forty-eight
+ * intact, and it has to be the only offset that does.  The later
+ * driver, whose games carry `patch.003`, has no such run and is
  * correctly left alone.
  */
 export function bankInDriver(d: Uint8Array): Instrument[] | null {
   const COUNT = 48;
-  const shaped = (o: number) =>
-    d[o + 26] <= 3 && d[o + 27] <= 3 && d[o + 12] <= 1 && d[o + 2] <= 7;
-  const blank = (o: number) => d.subarray(o, o + RECORD).every(b => b === 0);
-  const runs: number[] = [];
+  /** The widths the chip actually gives each field, by byte offset. */
+  const WIDTH: Array<[number, number]> = [
+    [0, 3], [1, 15], [3, 15], [4, 15], [5, 1],
+    [6, 15], [7, 15], [8, 63], [9, 1], [10, 1], [11, 1],
+  ];
+  const shaped = (o: number) => {
+    for (const at of [0, OP_BYTES])
+      for (const [i, max] of WIDTH) if (d[o + at + i] > max) return false;
+    // Feedback is masked to three bits when read, so it says nothing
+    // here; the algorithm bit and the two wave selects do.
+    return d[o + 12] <= 1 && d[o + 26] <= 3 && d[o + 27] <= 3;
+  };
+  let best = -1, bestAt = -1, ties = 0;
   for (let o = 0; o + COUNT * RECORD <= d.length; o++) {
-    let n = 0, live = 0;
-    while (o + (n + 1) * RECORD <= d.length && shaped(o + n * RECORD)) {
-      if (!blank(o + n * RECORD)) live++;
-      n++;
-    }
-    // Mostly-empty records are a field of zeros somewhere, not a bank.
-    if (n >= COUNT && live >= COUNT * 0.8) { runs.push(o); o += n * RECORD - 1; }
+    let n = 0;
+    for (let i = 0; i < COUNT; i++) if (shaped(o + i * RECORD)) n++;
+    if (n > best) { best = n; bestAt = o; ties = 1; }
+    else if (n === best) ties++;
   }
-  if (runs.length !== 1) return null;
-  return parseBank(d.subarray(runs[0], runs[0] + COUNT * RECORD));
+  if (best < COUNT || ties !== 1 || bestAt < 0) return null;
+  return parseBank(d.subarray(bestAt, bestAt + COUNT * RECORD));
 }

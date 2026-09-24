@@ -35,6 +35,7 @@ import { join } from 'node:path';
 import { Game, type ResourceSource } from '../src/resources.ts';
 import { Index } from '../src/script.ts';
 import { Session } from '../src/vm/session.ts';
+import { bankInDriver } from '../src/opl/patch.ts';
 import { ROOT } from './games.ts';
 
 const TRIMMED = join(import.meta.dirname, '..', 'games');
@@ -143,6 +144,53 @@ console.log('\nthe prompt the game would have shown');
     for (let i = 0; i < 1500 && st.running; i++) st = step();
     const worked = st.instructions - before;
     check(worked > 1_000_000, `answering costs ${(worked / 1e6).toFixed(0)}M instructions of work`);
+  }
+}
+
+console.log('\nthe instruments in the driver');
+{
+  const g = new Game(nodeSource(dirOf('kq4sci', 'KQ4')));
+  const drv = g.file('adl.drv');
+  check(drv !== null, `the game carries adl.drv (${drv?.length ?? 0} bytes)`);
+  const bank = drv ? bankInDriver(drv) : null;
+  check((bank?.length ?? 0) === 48, `${bank?.length ?? 0} instruments are read out of it`);
+
+  /**
+   * Found on the right byte, which is the whole difficulty.
+   *
+   * A first attempt tested only the fields that happen to be narrow and
+   * settled three bytes early: forty-eight records that all looked
+   * plausible, every one reading its neighbour's fields, and every
+   * instrument in the game wrong.  What tells one alignment from
+   * another is every field at the width the chip gives it -- so that is
+   * what is asked here, of the alignment chosen and of its neighbours.
+   */
+  if (drv) {
+    const RECORD = 28, OP = 13, COUNT = 48;
+    const WIDTH: Array<[number, number]> = [
+      [0, 3], [1, 15], [3, 15], [4, 15], [5, 1],
+      [6, 15], [7, 15], [8, 63], [9, 1], [10, 1], [11, 1],
+    ];
+    const shaped = (o: number) => {
+      for (const at of [0, OP])
+        for (const [i, max] of WIDTH) if (drv[o + at + i] > max) return false;
+      return drv[o + 12] <= 1 && drv[o + 26] <= 3 && drv[o + 27] <= 3;
+    };
+    const intact = (o: number) => {
+      let n = 0;
+      for (let i = 0; i < COUNT; i++) if (shaped(o + i * RECORD)) n++;
+      return n;
+    };
+    let at = -1, best = -1, ties = 0;
+    for (let o = 0; o + COUNT * RECORD <= drv.length; o++) {
+      const n = intact(o);
+      if (n > best) { best = n; at = o; ties = 1; } else if (n === best) ties++;
+    }
+    check(best === COUNT && ties === 1,
+      `one alignment has all ${COUNT} records intact, at ${at}${ties === 1 ? '' : ` -- and ${ties} do`}`);
+    const near = [-3, -2, -1, 1, 2, 3].map(d => intact(at + d));
+    check(near.every(n => n < COUNT),
+      `a byte either side of it does not: ${near.join(', ')} of ${COUNT}`);
   }
 }
 
