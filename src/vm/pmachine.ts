@@ -117,6 +117,16 @@ export const WINDOW_NOFRAME = 0x02;
 export const WINDOW_NODRAW = 0x08;
 
 /**
+ * A control that is a picture rather than words.
+ *
+ * SCI numbers its controls 1 button, 2 text, 3 edit, 4 icon, 6 list.
+ * An icon carries a view, a loop and a cel instead of a string, and
+ * Camelot's death and quit box uses one for the little animation that
+ * runs beside the question.
+ */
+export const CONTROL_ICON = 4;
+
+/**
  * Signal bits that say an actor is not there to be bumped into.
  *
  * 0x4000 is "ignore actors": `Act::canBeHere` skips the whole check when
@@ -2077,6 +2087,9 @@ export class PMachine {
         const x = p.x + this.prop(o, 'nsLeft');
         const y = p.y + this.prop(o, 'nsTop');
         const w = Math.max(0, this.prop(o, 'nsRight') - this.prop(o, 'nsLeft'));
+        // SCI numbers its controls: 1 button, 2 text, 3 edit, 4 icon,
+        // 6 list.  Zero is not one of them, but the games pass it for a
+        // plain button and it has always been taken as one here.
         const type = this.prop(o, 'type');
         const state = this.prop(o, 'state');
         const text = this.stringAt(this.prop(o, 'text'), o.scriptNo);
@@ -2107,6 +2120,29 @@ export class PMachine {
           this.screen.fill(x - 1, y - 1, x + w + 1, bottom + 1, selected ? pen : back);
           this.screen.frame(x - 1, y - 1, x + w + 1, bottom + 1, pen);
           if (font && text) this.screen.text(font, text, x + 1, y, selected ? back : pen);
+        } else if (type === CONTROL_ICON) {
+          /**
+           * A picture in the dialog, next to the words.
+           *
+           * Camelot's death and quit box is one: `myIcon` in script 128
+           * is a `DCIcon` carrying view 999 and a `cycleSpeed`, so it is
+           * not a still picture but a little animation running beside
+           * the question.  The cycling is the game's own -- `DCIcon`
+           * makes a cycler in `init` and its `cycle` advances the cel
+           * and calls `draw` again when it changes -- so all that was
+           * missing was somewhere for that draw to land.  Falling
+           * through to the text branch, an icon has no text and nothing
+           * appeared at all.
+           */
+          const cel = this.celOf(o);
+          if (cel) {
+            // Drawn over the dialog rather than into the scene, so it
+            // is not tested against the picture's priority.
+            this.screen.drawCel(cel, x, y, 15, false, false);
+            // Bit 5 of the style asks for a border around it.
+            if (state & 0x20)
+              this.screen.frame(x, y, x + cel.width, y + cel.height, pen);
+          }
         } else if (type === 3) {
           this.drawEditField(o, x, y, w, font, pen, back);
         } else if (font && text) {
