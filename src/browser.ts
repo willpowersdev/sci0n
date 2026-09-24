@@ -104,6 +104,12 @@ const GAMES = 'games/';
  * ones to hand, since a folder this does not know shows its own name
  * and that is the thing worth avoiding.
  *
+ * The name a game is known by, not the one on the box: the subtitle
+ * Sierra put after the colon is left off.  Two do not follow that.
+ * `iceman`'s colon is inside its name rather than in front of a
+ * subtitle, and the two Hoyles are told apart only by their volume,
+ * so it stays -- without the colon, to keep the rest of the rule.
+ *
  * `qfg1` is named for the box it first came in.  Sierra sold it as
  * Hero's Quest, lost the name to a trademark, and reprinted it as
  * Quest for Glory I; the game object inside still says HQ.
@@ -112,21 +118,21 @@ const GAMES = 'games/';
  * year on -- and is here because this plays it.
  */
 const TITLES: Record<string, string> = {
-  camelot: 'Conquests of Camelot: The Search for the Grail',
+  camelot: 'Conquests of Camelot',
   christmas1988: 'The Sierra Christmas Card',
-  hoyle1: 'Hoyle Official Book of Games: Volume 1',
-  hoyle2: 'Hoyle Official Book of Games: Volume 2',
+  hoyle1: 'Hoyle Official Book of Games Volume 1',
+  hoyle2: 'Hoyle Official Book of Games Volume 2',
   iceman: 'Codename: ICEMAN',
-  kq1sci: "King's Quest: Quest for the Crown",
-  kq4sci: "King's Quest IV: The Perils of Rosella",
+  kq1sci: "King's Quest",
+  kq4sci: "King's Quest IV",
   laurabow: "The Colonel's Bequest",
-  lsl2: 'Leisure Suit Larry 2: Goes Looking for Love',
-  lsl3: 'Leisure Suit Larry 3: Passionate Patti in Pursuit of the Pulsating Pectorals',
+  lsl2: 'Leisure Suit Larry 2',
+  lsl3: 'Leisure Suit Larry 3',
   mothergoose: 'Mixed-Up Mother Goose',
-  pq2: 'Police Quest II: The Vengeance',
-  qfg1: "Hero's Quest: So You Want to Be a Hero",
-  qfg2: 'Quest for Glory II: Trial by Fire',
-  sq3: 'Space Quest III: The Pirates of Pestulon',
+  pq2: 'Police Quest II',
+  qfg1: "Hero's Quest",
+  qfg2: 'Quest for Glory II',
+  sq3: 'Space Quest III',
 };
 
 /** The title to show for a folder, or the folder's own name. */
