@@ -716,7 +716,22 @@ export class PMachine {
             // convention `call`/`callb`/`calle` handle with their `- 1`.
             // Popping only the arguments leaks one slot per kernel call,
             // which a game's main loop turns into a steady stack climb.
-            const words = (a[1] >> 1) + this.restAdjust;
+            /**
+             * `&rest` belongs to the send, not to a kernel call on the way.
+             *
+             * Early SCI0 does not count `&rest` towards a kernel call's
+             * arguments, and its compiler relies on that: `Collect::
+             * firstTrue` pushes the selector, the count and `&rest`, then
+             * calls `NodeValue` to get the element, and only then sends.
+             * Letting the kernel call swallow the pending rest took the
+             * send's own arguments off the stack with it, so the send that
+             * followed dispatched nothing at all -- KQ4's dialogs never
+             * found the item to type into, and the copy-protection prompt
+             * could not be answered.  Later games emit no kernel call
+             * between the two and are unaffected either way.
+             */
+            const rest = this.index.selectorShift ? 0 : this.restAdjust;
+            const words = (a[1] >> 1) + rest;
             const pBase = st.length - words - 1;
             if (pBase < 0) { res.stopped = 'error'; res.detail = 'callk: params underflow'; break; }
             st[pBase] = words;
@@ -733,7 +748,7 @@ export class PMachine {
               // time and the instruction is run again until it answers.
               const r = this.menuStep(st[pBase + 1] ?? 0);
               if (r === null) { f.pc = ins.pc; yielded = true; break; }
-              this.restAdjust = 0;
+              if (rest) this.restAdjust = 0;   // untouched when the send still needs it
               st.splice(pBase, words + 1);
               this.acc = r;
               break;
@@ -747,7 +762,7 @@ export class PMachine {
                 break;
               }
             }
-            this.restAdjust = 0;
+            if (rest) this.restAdjust = 0;   // untouched when the send still needs it
             const args = st.splice(pBase, words + 1).slice(1);
             res.kernelCalls.set(a[0], (res.kernelCalls.get(a[0]) ?? 0) + 1);
             this.acc = this.kernel(a[0], args, f);
@@ -878,7 +893,27 @@ export class PMachine {
       const params = p.args.slice(p.i + 2, p.i + 2 + argc);
       p.i += 2 + argc;
 
-      const pi = p.fromSpecies === undefined ? p.target.indexOfSelector(sel) : -1;
+      /**
+       * Early SCI0 flags a property access in the low bit.
+       *
+       * Those games store selector ids as byte offsets -- twice the
+       * table index, so always even -- and a send that means "read or
+       * write this property" rather than "call this method" arrives
+       * with bit 0 set.  `Index.selectorShift` already knows which
+       * games those are, because the same builds carry the extra
+       * leading word in their scripts.
+       *
+       * Left unmasked, every property send in KQ4 matched nothing and
+       * returned zero.  `Dialog::setSize` walks its items asking each
+       * for `nsLeft` and `nsTop`, took nought for all of them, and
+       * opened a window four pixels square with the question drawn
+       * outside it -- a black screen with a white band across the top.
+       * The same zero reached the modal loop, which read its event's
+       * type as nothing whatever arrived and so span for ever: the
+       * copy-protection prompt could not be seen, answered or escaped.
+       */
+      const psel = (this.index.selectorShift && (sel & 1)) ? sel & ~1 : sel;
+      const pi = p.fromSpecies === undefined ? p.target.indexOfSelector(psel) : -1;
       if (pi >= 0) {
         if (argc === 0) this.acc = p.target.props[pi];
         else p.target.props[pi] = params[0];

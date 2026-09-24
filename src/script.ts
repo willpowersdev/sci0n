@@ -27,7 +27,7 @@
  * Those last two are parallel arrays, NOT interleaved pairs.
  */
 import type { Game } from './resources.ts';
-import { nameTable, classTable, SELECTORS, KERNEL_NAMES, CLASS_TABLE } from './vocab.ts';
+import { nameTable, classTable, SCI0_KERNEL, SELECTORS, KERNEL_NAMES, CLASS_TABLE } from './vocab.ts';
 import { patchScript } from './patches.ts';
 
 export const BLOCK_NAMES: Record<number, string> = {
@@ -243,8 +243,13 @@ export class Index {
   }
 
   kernelName(kid: number): string {
-    return (kid >= 0 && kid < this.kernel.length && this.kernel[kid])
-      ? this.kernel[kid] : `kernel${kid}`;
+    // A game that names fewer kernels than it calls falls back to the
+    // numbering itself, which is the interpreter's -- see SCI0_KERNEL.
+    // An entry that is not an identifier is not a name either: reading
+    // one past the end of KQ4's table lands in the string data.
+    const own = kid >= 0 && kid < this.kernel.length ? this.kernel[kid] : '';
+    if (own && /^[A-Za-z][A-Za-z0-9_]*$/.test(own)) return own;
+    return SCI0_KERNEL[kid] ?? (own || `kernel${kid}`);
   }
 
   /** What was changed in the games' own scripts, and why. */

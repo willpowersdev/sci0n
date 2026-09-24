@@ -46,6 +46,49 @@ export function nameTable(data: Uint8Array): string[] {
   return flat;
 }
 
+/**
+ * The SCI0 kernel, by number.
+ *
+ * A game's vocab.999 names the kernels for the benefit of whoever is
+ * reading the scripts; the numbers the bytecode calls are the
+ * interpreter's own and do not come from the game at all.  Most games
+ * name all of them anyway, so the resource is used where it is there.
+ *
+ * KQ4 is the exception: it names 97 and calls 102.  `copyProtect`
+ * compares the typed answer with `StrAt`, which sits at 102 and has no
+ * name in that game, and a kernel dispatched by a name it has not got
+ * did nothing and returned zero -- so the comparison never came to an
+ * answer and the game sat on a black screen after the question was
+ * dismissed, whether what was typed was right or wrong.
+ *
+ * Every SCI0 game here agrees on 0-107, which is what is listed.  SCI01
+ * renumbers from 41 onward, but those games name their own kernels and
+ * so never reach this list.
+ */
+export const SCI0_KERNEL: readonly string[] = [
+  'Load', 'UnLoad', 'ScriptID', 'DisposeScript', 'Clone', 'DisposeClone',
+  'IsObject', 'RespondsTo', 'DrawPic', 'Show', 'PicNotValid', 'Animate',
+  'SetNowSeen', 'NumLoops', 'NumCels', 'CelWide', 'CelHigh', 'DrawCel',
+  'AddToPic', 'NewWindow', 'GetPort', 'SetPort', 'DisposeWindow',
+  'DrawControl', 'HiliteControl', 'EditControl', 'TextSize', 'Display',
+  'GetEvent', 'GlobalToLocal', 'LocalToGlobal', 'MapKeyToDir',
+  'DrawMenuBar', 'MenuSelect', 'AddMenu', 'DrawStatus', 'Parse', 'Said',
+  'SetSynonyms', 'HaveMouse', 'SetCursor', 'FOpen', 'FPuts', 'FGets',
+  'FClose', 'SaveGame', 'RestoreGame', 'RestartGame', 'GameIsRestarting',
+  'DoSound', 'NewList', 'DisposeList', 'NewNode', 'FirstNode', 'LastNode',
+  'EmptyList', 'NextNode', 'PrevNode', 'NodeValue', 'AddAfter',
+  'AddToFront', 'AddToEnd', 'FindKey', 'DeleteKey', 'Random', 'Abs',
+  'Sqrt', 'GetAngle', 'GetDistance', 'Wait', 'GetTime', 'StrEnd',
+  'StrCat', 'StrCmp', 'StrLen', 'StrCpy', 'Format', 'GetFarText',
+  'ReadNumber', 'BaseSetter', 'DirLoop', 'CanBeHere', 'OnControl',
+  'InitBresen', 'DoBresen', 'DoAvoider', 'SetJump', 'SetDebug',
+  'InspectObj', 'ShowSends', 'ShowObjs', 'ShowFree', 'MemoryInfo',
+  'StackUsage', 'Profiler', 'GetMenu', 'SetMenu', 'GetSaveFiles',
+  'GetCWD', 'CheckFreeSpace', 'ValidPath', 'CoordPri', 'StrAt',
+  'DeviceInfo', 'GetSaveDir', 'CheckSaveGame', 'ShakeScreen',
+  'FlushResources', 'SinMult', 'CosMult', 'SinDiv', 'CosDiv',
+] as const;
+
 /** vocab.000: 52-byte header; a word's last character has the high bit set. */
 export function parserWords(data: Uint8Array): Array<[string, number, number]> {
   const out: Array<[string, number, number]> = [];
