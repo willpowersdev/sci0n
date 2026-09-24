@@ -523,7 +523,25 @@ export class PMachine {
           const kind = rest & 3, toStack = (rest >> 2) & 1, indexed = (rest >> 3) & 1;
           const idx = a[0] + (indexed ? this.acc : 0);
           const ref = this.varRef(kind, idx, f.scriptNo, f);
-          if (!ref) { res.stopped = 'error'; res.detail = `var ${kind}[${idx}] out of range`; break; }
+          /**
+           * A variable outside its block is not fatal either.
+           *
+           * The same laxity as the property above, and the games lean
+           * on it the same way -- KQ4's `copyProtect` reads local 0 of
+           * a script that has no locals before the game has begun.
+           * SCI's own fallback differs from the property one, though:
+           * a denied read gives back the accumulator rather than zero,
+           * and a denied write simply does not happen.  The value of a
+           * store still has to come off the stack, or everything
+           * pushed after it is read one slot out.
+           */
+          if (!ref) {
+            this.oobVars++;
+            if (grp === 0) { if (toStack) st.push(this.acc); }
+            else if (grp === 1) { if (toStack || indexed) st.pop(); }
+            else if (toStack) st.push(this.acc);
+            break;
+          }
           if (grp === 0) { const v = ref.get(); if (toStack) st.push(v); else this.acc = v; }
           else if (grp === 1) {
             // An indexed store takes its index from the accumulator, so
@@ -653,10 +671,32 @@ export class PMachine {
           case 'ipToa': case 'dpToa': case 'ipTos': case 'dpTos': {
             if (!f.obj) { res.stopped = 'error'; res.detail = 'property access with no self'; break; }
             const pi = a[0] >> 1;
-            if (pi < 0 || pi >= f.obj.props.length) {
-              res.stopped = 'error'; res.detail = `property ${pi} out of range`; break;
-            }
             const n = ins.name;
+            /**
+             * A property the object does not have reads as zero.
+             *
+             * Refusing it kills games that are not broken.  SCI did no
+             * checking at all -- the offset was added to the object's
+             * address and whatever lay there was used -- and Sierra's
+             * own compiler let an invalid property symbol through in
+             * `Act::canBeHere`, which is in script 998 of several
+             * games.  Hero's Quest has it, and so does Iceman: the
+             * method runs during the speed test before the title is
+             * even up, so the whole game stopped on the first frame
+             * with `property 26044 out of range`.
+             *
+             * Zero is what the games get away with, since the value is
+             * only ever tested against a flag.  A write goes nowhere
+             * rather than growing the object.
+             */
+            const bad = pi < 0 || pi >= f.obj.props.length;
+            if (bad) {
+              this.oobProps++;
+              if (n === 'pToa' || n === 'ipToa' || n === 'dpToa') this.acc = 0;
+              else if (n === 'pTos' || n === 'ipTos' || n === 'dpTos') st.push(0);
+              else if (n === 'sTop') st.pop();
+              break;
+            }
             if (n === 'pToa') this.acc = f.obj.props[pi];
             else if (n === 'pTos') st.push(f.obj.props[pi]);
             else if (n === 'aTop') f.obj.props[pi] = this.acc;
@@ -1262,6 +1302,10 @@ export class PMachine {
    * time passes for a game that is waiting without animating.
    */
   ticks = 0;
+  /** Property reads that landed outside the object, for measurement. */
+  oobProps = 0;
+  /** Variable reads that landed outside their block, likewise. */
+  oobVars = 0;
   private lastWait = 0;
   /**
    * Ticks a `Wait(0)` is held for -- the machine we claim to be.

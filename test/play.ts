@@ -60,4 +60,14 @@ for (const name of GAMES) {
     (ok ? 'running' : `stopped: ${st.stopped ?? (drew ? '' : 'drew nothing')}`));
 }
 console.log(`\n${playable}/${GAMES.length} games run continuously and draw`);
-process.exit(playable >= 5 ? 0 : 1);
+/**
+ * All of them, now that all of them do.
+ *
+ * The bar was five, which is what it had to be while three of these
+ * stopped on their first frame: Hero's Quest and Iceman on an invalid
+ * property in `Act::canBeHere`, King's Quest 4 on an invalid local in
+ * `copyProtect`.  Both are faults in Sierra's own compiled scripts
+ * that the original interpreter never checked for, and leaving the bar
+ * low would let any of them fall over again without a word.
+ */
+process.exit(playable === GAMES.length ? 0 : 1);
