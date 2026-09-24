@@ -116,6 +116,8 @@ export const SIGNAL_FIXED_PRIORITY = 0x10;
  * `DirLoop` was overwriting the loop the script had chosen.
  */
 export const SIGNAL_NO_TURN = 0x800;
+/** Set on a client whose step was refused, for the script to read. */
+export const SIGNAL_HIT_OBSTACLE = 0x0400;
 
 /**
  * Window styles, as the games pass them to `NewWindow`.
@@ -980,22 +982,65 @@ export class PMachine {
    * straight without rounding drift, and means a client nudged by
    * anything else simply carries on from where it now is.
    */
-  private bresenStep(mover: RtObject, client: RtObject, mult: number) {
+  /**
+   * Set up the line a mover will walk its client along.
+   *
+   * The dominant axis takes a whole step each cycle and the other is
+   * nudged when the error term says so, which is what makes the last
+   * step land on the target rather than near it.  `i1` and `i2` are the
+   * two amounts the error moves by and `di` is the error itself; they
+   * are doubled so the arithmetic stays whole.
+   *
+   * The step is reduced until the shorter axis can keep up.  Without
+   * that a diagonal with a long dominant axis moves the other one by
+   * more than its own step allows, and the actor arrives sideways.
+   */
+  private initBresen(mover: RtObject, client: RtObject, mult: number) {
     const cx = s16(u16(this.prop(client, 'x')));
     const cy = s16(u16(this.prop(client, 'y')));
-    const tx = s16(u16(this.prop(mover, 'x', cx)));
-    const ty = s16(u16(this.prop(mover, 'y', cy)));
-    const dx = tx - cx, dy = ty - cy;
-    const sx = Math.max(1, Math.abs(s16(u16(this.prop(client, 'xStep', 3))))) * mult;
-    const sy = Math.max(1, Math.abs(s16(u16(this.prop(client, 'yStep', 2))))) * mult;
-    if (Math.abs(dx) <= sx && Math.abs(dy) <= sy) return { dx, dy };
-    if (Math.abs(dx) * sy >= Math.abs(dy) * sx) {
-      const step = Math.sign(dx) * sx;
-      return { dx: step, dy: Math.round(dy * sx / Math.abs(dx)) };
+    const deltaX = s16(u16(this.prop(mover, 'x', cx))) - cx;
+    const deltaY = s16(u16(this.prop(mover, 'y', cy))) - cy;
+    let xStep = Math.max(1, Math.abs(s16(u16(this.prop(client, 'xStep', 3))))) * mult;
+    const yStep = Math.max(1, Math.abs(s16(u16(this.prop(client, 'yStep', 2))))) * mult;
+    let dx = 0, dy = 0, i1 = 0, i2 = 0, di = 0, incr = 1, onX = 0;
+    for (;;) {
+      if (Math.abs(deltaX) >= Math.abs(deltaY)) {
+        onX = 1;
+        dx = deltaX < 0 ? -xStep : xStep;
+        dy = deltaX !== 0 ? Math.trunc(dx * deltaY / deltaX) : 0;
+        incr = 1;
+        i1 = 2 * (dx * deltaY - dy * deltaX);
+        if (deltaY < 0) { incr = -1; i1 = -i1; }
+        i2 = i1 - 2 * deltaX;
+        di = i1 - deltaX;
+        if (deltaX < 0) { i1 = -i1; i2 = -i2; di = -di; }
+      } else {
+        onX = 0;
+        dy = deltaY < 0 ? -yStep : yStep;
+        dx = deltaY !== 0 ? Math.trunc(dy * deltaX / deltaY) : 0;
+        incr = 1;
+        i1 = 2 * (dy * deltaX - dx * deltaY);
+        if (deltaX < 0) { incr = -1; i1 = -i1; }
+        i2 = i1 - 2 * deltaY;
+        di = i1 - deltaY;
+        if (deltaY < 0) { i1 = -i1; i2 = -i2; di = -di; }
+      }
+      xStep--;
+      if (!(xStep > yStep && xStep !== 0 && yStep < Math.abs(dy + incr))) break;
     }
-    const step = Math.sign(dy) * sy;
-    return { dx: Math.round(dx * sy / Math.abs(dy)), dy: step };
+    this.setProp(mover, 'dx', dx);
+    this.setProp(mover, 'dy', dy);
+    this.setProp(mover, 'b-i1', i1);
+    this.setProp(mover, 'b-i2', i2);
+    this.setProp(mover, 'b-di', di);
+    this.setProp(mover, 'b-incr', incr);
+    this.setProp(mover, 'b-xAxis', onX);
+    this.setProp(mover, 'b-moveCnt', 0);
+    this.setProp(mover, 'xLast', cx);
+    this.setProp(mover, 'yLast', cy);
+    this.setProp(mover, 'completed', 0);
   }
+
 
   /**
    * An edit field: what has been typed, and the caret.
@@ -1944,16 +1989,7 @@ export class PMachine {
         if (!mover) return 0;
         const client = this.resolveTarget(null, this.prop(mover, 'client'));
         if (!client) return 0;
-        const mult = args.length > 1 ? (a1 || 1) : 1;
-        const cx = s16(u16(this.prop(client, 'x')));
-        const cy = s16(u16(this.prop(client, 'y')));
-        const step = this.bresenStep(mover, client, mult);
-        this.setProp(mover, 'dx', step.dx);
-        this.setProp(mover, 'dy', step.dy);
-        this.setProp(mover, 'xLast', cx);
-        this.setProp(mover, 'yLast', cy);
-        this.setProp(mover, 'b-moveCnt', 0);
-        this.setProp(mover, 'completed', 0);
+        this.initBresen(mover, client, args.length > 1 ? (a1 || 1) : 1);
         return 0;
       }
 
@@ -1965,6 +2001,23 @@ export class PMachine {
        * they match -- so the last step has to land exactly on the
        * target rather than merely near it, or the walk never ends.
        */
+      /**
+       * One cycle of a mover: step its client along the line.
+       *
+       * `Motion::doit` calls `moveDone` only when the client's x and y
+       * are exactly the mover's, and calls this otherwise, so the walk
+       * ends only if the client lands on the target to the pixel.  That
+       * is what the line state set up by `InitBresen` is for: each step
+       * takes `dx`, `dy` along the dominant axis and the error term
+       * decides when the other axis is nudged, so the last step arrives
+       * rather than passing nearby.
+       *
+       * Once the remaining distance along that axis is shorter than one
+       * step, the client is placed on the target outright.  Stopping a
+       * step short instead leaves the two unequal for ever, and the
+       * script goes on asking: a mover that cannot finish is a room
+       * that never moves on.
+       */
       case 'DoBresen': {
         const mover = this.resolveTarget(null, a0);
         if (!mover) return 0;
@@ -1972,32 +2025,49 @@ export class PMachine {
         if (!client) return 0;
         const cx = s16(u16(this.prop(client, 'x')));
         const cy = s16(u16(this.prop(client, 'y')));
+        const tx = s16(u16(this.prop(mover, 'x', cx)));
+        const ty = s16(u16(this.prop(mover, 'y', cy)));
         this.setProp(mover, 'xLast', cx);
         this.setProp(mover, 'yLast', cy);
-        const step = this.bresenStep(mover, client, 1);
-        const nx = cx + step.dx, ny = cy + step.dy;
-        // Refuse a step onto ground this actor may not stand on.
-        //
-        // `Act::doit` does ask `canBeHere` after moving, but only when
-        // the base rectangle's left or right edge changed, so a walk
-        // straight up or down is never checked; and the `Avoid` avoider
-        // that would catch it is only fitted in the handful of rooms
-        // that ask for one.  The step itself is the one place every
-        // walk passes through.  A move out of a bad position is always
-        // allowed, so an actor that starts somewhere illegal -- or is
-        // put there by a script -- can still get out.
-        if (!this.legalAt(client, nx, ny) && this.legalAt(client, cx, cy)) {
-          // Telling the mover it has arrived is what ends the walk:
-          // `Motion::doit` compares its target against the client and
-          // calls `moveDone` when they agree.
-          this.setProp(mover, 'x', cx);
-          this.setProp(mover, 'y', cy);
+        const dx = s16(u16(this.prop(mover, 'dx')));
+        const dy = s16(u16(this.prop(mover, 'dy')));
+        const onX = this.prop(mover, 'b-xAxis') !== 0;
+        // Arrived, or near enough that one more step would pass it.
+        if (onX ? Math.abs(tx - cx) < Math.abs(dx) || dx === 0
+                : Math.abs(ty - cy) < Math.abs(dy) || dy === 0) {
+          this.setProp(client, 'x', tx);
+          this.setProp(client, 'y', ty);
           return 0;
         }
+        const i1 = s16(u16(this.prop(mover, 'b-i1')));
+        const i2 = s16(u16(this.prop(mover, 'b-i2')));
+        const incr = s16(u16(this.prop(mover, 'b-incr')));
+        let di = s16(u16(this.prop(mover, 'b-di')));
+        let nx = cx + dx, ny = cy + dy;
+        if (di < 0) di += i1;
+        else { di += i2; if (onX) ny += incr; else nx += incr; }
+        /**
+         * A step onto ground this actor may not stand on is taken back.
+         *
+         * The line state goes back with it, or the error term would
+         * carry a step that never happened and the actor would drift
+         * off the line.  The client is told by its signal, which is
+         * what `Act::doit` and the avoiders read.
+         *
+         * A move out of a bad position is always allowed, so an actor
+         * put somewhere illegal by a script can still get out.
+         */
+        if (!this.legalAt(client, nx, ny) && this.legalAt(client, cx, cy)) {
+          this.setProp(client, 'signal',
+            u16(this.prop(client, 'signal')) | SIGNAL_HIT_OBSTACLE);
+          return 0;
+        }
+        this.setProp(client, 'signal',
+          u16(this.prop(client, 'signal')) & ~SIGNAL_HIT_OBSTACLE);
         this.setProp(client, 'x', nx);
         this.setProp(client, 'y', ny);
-        this.setProp(mover, 'b-moveCnt',
-          u16(this.prop(mover, 'b-moveCnt')) + 1);
+        this.setProp(mover, 'b-di', di);
+        this.setProp(mover, 'b-moveCnt', u16(this.prop(mover, 'b-moveCnt')) + 1);
         return 0;
       }
 
