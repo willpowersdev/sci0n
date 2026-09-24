@@ -92,6 +92,19 @@ const MAX_FRAMES = 1024;
 /** What `TextSize` wraps at when the caller names no width. */
 const TEXT_WIDTH = 192;
 
+/**
+ * "I have finished moving; make me part of the scene."
+ *
+ * A script sets this on a view that has arrived where it belongs.  The
+ * interpreter draws it into the picture and turns the bit into
+ * `SIGNAL_NO_UPDATE`, after which the view is scenery: the game is free
+ * to drop it from the cast, which is what KQ4's title does with the
+ * three pieces of its "IV" once they have flown in.  Drawn to the
+ * screen instead, as every other cast member is, they lasted until the
+ * next thing that repainted from the picture -- the numerals appeared,
+ * sat there while the opening question was up, and vanished with it.
+ */
+export const SIGNAL_STOP_UPDATE = 0x0001;
 export const SIGNAL_FIXED_PRIORITY = 0x10;
 /**
  * `noTurn`: this object does not face the way it is going.
@@ -1508,6 +1521,25 @@ export class PMachine {
         pri = this.priorityOf(s16(u16(this.prop(o, 'y'))));
         this.setProp(o, 'priority', pri);
       } else if (pri < 0 || pri > 15) pri = this.priorityOf(r.bottom - 1);
+      /**
+       * Arrived: it belongs to the picture now.
+       *
+       * Drawing it again each cycle costs one blit and saves keeping a
+       * record of what has been baked; a view that has stopped moving
+       * lands in the same place every time.
+       *
+       * SCI also rewrites the bit to `SIGNAL_NO_UPDATE` here, and that
+       * part is deliberately left undone: a member carrying that bit is
+       * one the ego walks through, and Camelot's `armourStand` and
+       * `pouch` both stop updating the moment the room settles.  Making
+       * the swap lets the ego walk through the furniture -- which this
+       * project has evidence against, in the comment on `blockedByCast`
+       * and in the check that reads it.  The visible half of the rule
+       * is what the games depend on; the bit is bookkeeping, and this
+       * one is wrong for them.
+       */
+      if (u16(this.prop(o, 'signal')) & SIGNAL_STOP_UPDATE)
+        this.screen.addToPic(cel, r.left, r.top, pri);
       drawn.push({ o, cel, left: r.left, top: r.top, pri,
                    y: s16(u16(this.prop(o, 'y'))), z: s16(u16(this.prop(o, 'z'))),
                    order: order++ });

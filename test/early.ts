@@ -35,6 +35,7 @@ import { join } from 'node:path';
 import { Game, type ResourceSource } from '../src/resources.ts';
 import { Index } from '../src/script.ts';
 import { Session } from '../src/vm/session.ts';
+import { Picture, WIDTH } from '../src/pic.ts';
 import { bankInDriver } from '../src/opl/patch.ts';
 import { ROOT } from './games.ts';
 
@@ -192,6 +193,58 @@ console.log('\nthe instruments in the driver');
     check(near.every(n => n < COUNT),
       `a byte either side of it does not: ${near.join(', ')} of ${COUNT}`);
   }
+}
+
+console.log('\nthe numerals on the title screen');
+{
+  const g = new Game(nodeSource(dirOf('kq4sci', 'KQ4')));
+  const s = new Session(g, new Index(g));
+  let clock = 0;
+  s.now = () => clock;
+
+  /**
+   * The band above the banner, which the picture leaves nearly empty.
+   *
+   * The "IV" flies in as three views and, once it has landed, the game
+   * marks them as having stopped moving and drops them from the cast --
+   * so unless they have been made part of the picture by then, nothing
+   * redraws them and the next thing that repaints from the background
+   * takes them away.  That is what happened: the numerals sat there
+   * while the opening question was up and went with it.
+   *
+   * Counted rather than sampled, because a sparkle drifting through
+   * would satisfy a probe on a single pixel.
+   */
+  const TOP = 15, BOT = 78;
+  const ink = () => {
+    let n = 0;
+    for (let y = TOP; y < BOT; y++)
+      for (let x = 0; x < WIDTH; x++) if (s.screen.visual[y * WIDTH + x] !== 0) n++;
+    return n;
+  };
+  const bare = (() => {
+    const pic = new Picture(g.tryData('pic', 96) as Uint8Array);
+    let n = 0;
+    for (let y = TOP; y < BOT; y++)
+      for (let x = 0; x < WIDTH; x++) if (pic.visual[y * WIDTH + x] !== 0) n++;
+    return n;
+  })();
+
+  let st = s.tick();
+  const seen: Array<[number, number]> = [];
+  for (let i = 0; i <= 1600 && st.running; i++) {
+    clock += 1000 / 60;
+    st = s.tick();
+    if ([300, 900, 1500].includes(i) && st.picture === 96) seen.push([i / 60, ink()]);
+  }
+  check(seen.length === 3, `the title screen is up at ${seen.map(([t]) => `${t.toFixed(0)}s`).join(', ')}`);
+  // The picture leaves 778 pixels of ink in that band; the numerals are
+  // several thousand more, so anything near the bare figure is the
+  // banner on its own.
+  check(bare < 1500, `the picture alone puts ${bare} pixels there`);
+  for (const [t, n] of seen)
+    check(n > bare + 2000, `at ${t.toFixed(0)}s there are ${n}` +
+      `${n > bare + 2000 ? '' : ' -- THE NUMERALS HAVE GONE'}`);
 }
 
 console.log('\nthe intro it plays');
