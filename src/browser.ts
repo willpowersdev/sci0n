@@ -118,13 +118,27 @@ async function sourceFromServer(name: string): Promise<ResourceSource> {
  */
 let crt: CrtDisplay | null = null;
 let crtTried = false;
-let enhanced = false;
+/**
+ * Whether the game is shown on a tube.
+ *
+ * On, because it is how the art was meant to be seen.  It is turned off
+ * again the moment the browser will not give us WebGL2, and the button
+ * that toggles it hides itself in that case.
+ */
+let enhanced = true;
 
-function blit(rgb: Uint8Array, w: number, h: number, alpha?: Uint8Array) {
+/**
+ * Put a picture on the canvas.
+ *
+ * `tube` asks for the CRT, and only the game asks: the resource browser
+ * is for looking at what is actually in a resource, and scanlines and a
+ * phosphor mask across a page of font glyphs or a cursor blown up to
+ * fill the screen would be in the way of the one thing that view is
+ * for.
+ */
+function blit(rgb: Uint8Array, w: number, h: number, alpha?: Uint8Array, tube = false) {
   cv.width = w * SCALE; cv.height = Math.round(h * SCALE * ASPECT);
-  // The overlays draw with transparency, which the tube has no notion
-  // of; anything carrying an alpha channel goes straight to the canvas.
-  if (enhanced && !alpha) {
+  if (tube && enhanced) {
     if (!crtTried) { crtTried = true; crt = CrtDisplay.create(); }
     if (crt) {
       ctx.imageSmoothingEnabled = false;
@@ -478,13 +492,16 @@ function startPlay() {
   /**
    * The picture on a tube, or flat.
    *
-   * Off by default: it costs a little to draw and it is a matter of
-   * taste, even though the art was made for it.  Hidden altogether
-   * where the browser will not give us WebGL2, since the button would
-   * do nothing.
+   * On by default, because it is how the art was meant to be seen --
+   * the dithered pairs these games are built out of were drawn for a
+   * screen that mixes them.  The button puts the flat picture back for
+   * anyone who would rather see the pixels, and hides itself where the
+   * browser will not give us WebGL2 to draw the tube with.
    */
   const crtBtn = $('crt') as HTMLButtonElement;
   if (!crtTried) { crtTried = true; crt = CrtDisplay.create(); }
+  // Nothing to offer, and nothing to turn on, without WebGL2.
+  if (!crt) enhanced = false;
   crtBtn.hidden = crt === null;
   const showCrt = () => { crtBtn.textContent = enhanced ? '📺 CRT' : '📺 flat'; };
   showCrt();
@@ -570,7 +587,7 @@ function startPlay() {
     const h = session.screen.displayHeight;
     const view = rgb.subarray(0, WIDTH * h * 3);
     session.screen.rgb(view);
-    blit(view, WIDTH, h);
+    blit(view, WIDTH, h, undefined, true);
     $('hud').textContent =
       `${st.frames} frames · ${(st.instructions / 1e6).toFixed(1)}M instructions` +
       `${st.picture >= 0 ? ` · picture ${st.picture}` : ''}` +
