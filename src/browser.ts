@@ -16,7 +16,7 @@ import { saidDecode, gameGroups, nameTable, stringTable, classTable,
 import { strings as textStrings } from './text.ts';
 import { Font, Cursor, CURSOR_SIZE, CURSOR_CLEAR } from './font.ts';
 import { parseSound, detectHeaderSize, DEVICE_ADLIB } from './sound.ts';
-import { revise } from './dictation.ts';
+import { Dictation } from './dictation.ts';
 import { parseBank, type Instrument } from './opl/patch.ts';
 import { Player, resample, TICKS_PER_SECOND } from './opl/player.ts';
 import { OPL_RATE } from './opl/opl2.ts';
@@ -335,6 +335,7 @@ function stopPlay() {
   window.removeEventListener('keydown', onPlayKey, true);
   const field = $('dictate') as HTMLInputElement;
   field.removeEventListener('input', onDictate);
+  field.removeEventListener('compositionend', onDictate);
   field.blur();
   field.hidden = true;
   clearDictation();
@@ -368,7 +369,7 @@ function onPlayKey(e: KeyboardEvent) {
   // Backspace edits the field while there is anything in it, and the
   // deletion is sent from there like any other revision.  Sending it
   // here as well would take back two letters for one press.
-  if (e.key === 'Backspace' && dictated !== '') return;
+  if (e.key === 'Backspace' && dictation.pending !== '') return;
   const m = keyMessage(e);
   if (m === null) return;
   e.preventDefault();
@@ -385,31 +386,28 @@ function onPlayKey(e: KeyboardEvent) {
  * The field is not emptied as it is read; see `src/dictation.ts` for
  * why, and for what is sent instead.
  */
-let dictated = '';
+const dictation = new Dictation();
 
 /** Start the line again, because the game has taken it. */
 function clearDictation() {
   const el = $('dictate') as HTMLInputElement | null;
   if (el) el.value = '';
-  dictated = '';
+  dictation.reset();
 }
 
 /**
  * Text arriving in the hidden field, by typing or by dictation.
  *
  * Only the difference against what was sent last time goes to the game,
- * so a phrase that dictation revises as it hears it arrives once.
+ * so a phrase that dictation revises as it hears it arrives once.  Every
+ * revision is passed on as it comes, including the ones the browser
+ * calls unfinished -- see `src/dictation.ts` for why waiting for it to
+ * call them finished means the game hears nothing at all.
  */
-function onDictate(e?: Event) {
+function onDictate() {
   const el = $('dictate') as HTMLInputElement;
-  // An IME is still deciding; its own event says when it has settled.
-  // Dictation does not always announce itself this way, which is why
-  // the difference is taken rather than trusted to arrive whole.
-  if ((e as InputEvent | undefined)?.isComposing) return;
-  const now = el.value;
-  if (!session) { dictated = now; return; }
-  for (const k of revise(dictated, now)) session.key(k);
-  dictated = now;
+  const keys = dictation.update(el.value);
+  if (session) for (const k of keys) session.key(k);
 }
 
 /**
@@ -535,6 +533,10 @@ function startPlay() {
   window.addEventListener('keydown', onPlayKey, true);
   const field = $('dictate') as HTMLInputElement;
   field.addEventListener('input', onDictate);
+  // Belt and braces: whatever a composing input event did or did not
+  // deliver, the end of the composition is read as well.  Sending the
+  // difference twice sends nothing the second time.
+  field.addEventListener('compositionend', onDictate);
   ($('mic') as HTMLElement).hidden = false;
   /**
    * How the EGA's dither pairs are shown.

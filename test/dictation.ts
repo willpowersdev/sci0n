@@ -22,7 +22,7 @@ import { join } from 'node:path';
 import { Game, type ResourceSource } from '../src/resources.ts';
 import { Index } from '../src/script.ts';
 import { Session } from '../src/vm/session.ts';
-import { revise, BACKSPACE } from '../src/dictation.ts';
+import { revise, BACKSPACE, Dictation } from '../src/dictation.ts';
 import { ROOT } from './games.ts';
 
 const ENTER = 0x0D;
@@ -89,6 +89,13 @@ console.log('the difference between revisions');
  * The line is read out of the interpreter's heap rather than off the
  * screen: the screen would answer whether the text was drawn, and this
  * is asking what the game believes was typed.
+ *
+ * When the window opens matters as much as what it ends up holding.
+ * The parser window is opened by the first printable key the game sees,
+ * so a handler that waits for the speaker to finish before sending
+ * anything leaves the screen blank throughout -- the words pile up in
+ * the field and the game is never told.  That is a passing line buffer
+ * and a broken game, so the first revision is checked on its own.
  */
 for (const name of ['SQ3', 'CAMELOT']) {
   console.log(`\n${name} input line`);
@@ -101,9 +108,12 @@ for (const name of ['SQ3', 'CAMELOT']) {
 
   const vm = s.vm as any;
   const drawControl = idx.kernel.indexOf('DrawControl');
+  const newWindow = idx.kernel.indexOf('NewWindow');
   let edit: any = null;
+  let windows = 0;
   const kernel = vm.kernel.bind(vm);
   vm.kernel = (id: number, a: number[], f: unknown) => {
+    if (id === newWindow) windows++;
     if (id === drawControl) {
       const o = vm.resolveTarget(null, a[0]);
       // Only an editable field has a character limit, and it is the
@@ -118,27 +128,26 @@ for (const name of ['SQ3', 'CAMELOT']) {
     if (i % 120 === 0) s.key(ENTER);
     st = step();
   }
+  // Only what dictating opens counts; the opening sequence has windows
+  // of its own.
   edit = null;
+  windows = 0;
 
-  /**
-   * The browser's handler, as it stands: keep the field, send the
-   * difference.  Written out rather than imported because the real one
-   * reaches for the DOM, so what is exercised here is the arrangement
-   * it uses -- if that arrangement went back to emptying the field,
-   * this is what would change.
-   */
-  let dictated = '';
-  const onInput = (value: string) => {
-    for (const k of revise(dictated, value)) {
-      s.key(k);
-      for (let i = 0; i < SETTLE && st.running; i++) st = step();
-    }
-    dictated = value;
+  // The browser's own handler, less the DOM it reads the value from.
+  const dictation = new Dictation();
+  const settle = () => { for (let i = 0; i < SETTLE && st.running; i++) st = step(); };
+  const speak = (value: string) => {
+    for (const k of dictation.update(value)) { s.key(k); settle(); }
+    settle();
   };
-  for (const partial of SPOKEN) onInput(partial);
-  for (let i = 0; i < SETTLE * 4 && st.running; i++) st = step();
 
-  if (!edit) { check(false, 'typing opened no input field'); continue; }
+  speak(SPOKEN[0]);
+  check(windows > 0, `the first sound spoken opens the input window (${windows} opened)`);
+
+  for (const partial of SPOKEN.slice(1)) speak(partial);
+  settle(); settle();
+
+  if (!edit) { check(false, 'no input field was drawn'); continue; }
   const line = vm.stringAt(vm.prop(edit, 'text'), edit.scriptNo) as string;
   check(line === SAID, `it holds "${line}"`);
   check(!line.startsWith('gge'), 'the partial guesses were not left in front of it');

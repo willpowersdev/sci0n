@@ -44,3 +44,34 @@ export function revise(sent: string, now: string): number[] {
   }
   return keys;
 }
+
+/**
+ * A field being dictated into, and what the game has been told so far.
+ *
+ * Progress is deliberately not gated on the browser's composition
+ * events.  Dictation composes on macOS -- every keystroke of it arrives
+ * with `isComposing` set and nothing is final until the speaker stops --
+ * so waiting for the composition to end means waiting for the whole
+ * utterance, and a parser window that only opens once someone has
+ * finished speaking never opens while they are still talking to it.
+ * Feeding each revision through instead costs nothing, because the
+ * difference against the last one is all that is sent: an intermediate
+ * guess types letters that a later revision takes back, which is what
+ * dictation looks like on screen anyway.
+ */
+export class Dictation {
+  private sent = '';
+
+  /** The keys that bring the game's line up to date with the field. */
+  update(value: string): number[] {
+    const keys = revise(this.sent, value);
+    this.sent = value;
+    return keys;
+  }
+
+  /** Start again: the game has taken the line. */
+  reset() { this.sent = ''; }
+
+  /** What the field is holding that the game already knows about. */
+  get pending(): string { return this.sent; }
+}
