@@ -286,6 +286,50 @@ console.log('\nthe credits that follow it');
     `the most on screen at once is ${Math.max(...ink)} pixels`);
 }
 
+console.log('\nwhat a property can hold');
+{
+  const g = new Game(nodeSource(dirOf('kq4sci', 'KQ4')));
+  const s = new Session(g, new Index(g));
+  let clock = 0;
+  s.now = () => clock;
+  const vm = s.vm as unknown as {
+    listValues(h: number): number[];
+    resolveTarget(f: unknown, v: number): object | null;
+    prop(o: unknown, name: string, d?: number): number;
+    cast: number;
+  };
+
+  /**
+   * A property is a word, and the games' arithmetic on one wraps.
+   *
+   * This machine keeps object and buffer references in properties as
+   * well, tagged above the sixteenth bit, so those are stored whole --
+   * but a coordinate is a number and has to behave like one.  Stored
+   * wide, one of the fairies in the Tamir scene walked its x out past
+   * half a million while the interpreter went on reading the low word
+   * of it, so what was written and what was read had nothing to do
+   * with each other.
+   */
+  let st = s.tick();
+  let worst = 0, worstAt = '';
+  for (let i = 0; i < 20000 && st.running; i++) {
+    clock += 1000 / 60;
+    st = s.tick();
+    if (i % 5 !== 0) continue;
+    for (const v of vm.listValues(vm.cast)) {
+      const o = vm.resolveTarget(null, v);
+      if (!o) continue;
+      for (const name of ['x', 'y']) {
+        const n = Math.abs(vm.prop(o, name));
+        if (n > worst) { worst = n; worstAt = `${name} of view ${vm.prop(o, 'view')} at ${(i / 60).toFixed(0)}s`; }
+      }
+    }
+  }
+  check(worst <= 32768,
+    `the furthest any cast coordinate reaches is ${worst} (${worstAt})` +
+    `${worst <= 32768 ? '' : ' -- WIDER THAN A WORD'}`);
+}
+
 console.log('\nthe intro it plays');
 {
   const g = new Game(nodeSource(dirOf('kq4sci', 'KQ4')));

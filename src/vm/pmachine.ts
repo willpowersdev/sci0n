@@ -728,8 +728,8 @@ export class PMachine {
             }
             if (n === 'pToa') this.acc = f.obj.props[pi];
             else if (n === 'pTos') st.push(f.obj.props[pi]);
-            else if (n === 'aTop') f.obj.props[pi] = this.acc;
-            else if (n === 'sTop') f.obj.props[pi] = st.pop() ?? 0;
+            else if (n === 'aTop') f.obj.props[pi] = PMachine.word(this.acc);
+            else if (n === 'sTop') f.obj.props[pi] = PMachine.word(st.pop() ?? 0);
             else {
               const d = (n === 'ipToa' || n === 'ipTos') ? 1 : -1;
               f.obj.props[pi] += d;
@@ -945,7 +945,7 @@ export class PMachine {
       const pi = p.fromSpecies === undefined ? p.target.indexOfSelector(psel) : -1;
       if (pi >= 0) {
         if (argc === 0) this.acc = p.target.props[pi];
-        else p.target.props[pi] = params[0];
+        else p.target.props[pi] = PMachine.word(params[0]);
         continue;
       }
       const found = p.fromSpecies !== undefined
@@ -1499,19 +1499,37 @@ export class PMachine {
   /**
    * Where each stopped view was drawn, so it can be taken off again.
    *
-   * Scenery is left out of the ordinary restore, so the only thing that
-   * removes it is the game saying to: the hidden bit.  The rectangle is
-   * given to the restore list at that point and cleared on the next
-   * cycle like anything else.
+   * Scenery is left out of the ordinary restore, which is what keeps it
+   * when the game drops it from the cast.  Two things put the picture
+   * back: the game hiding it, which is how the credits make way for one
+   * another, and the view moving after all -- a script may set the bit
+   * and then go on changing the thing, and KQ4's intro does, which left
+   * Graham's hat hanging in the air behind itself as he flung it.
    */
-  private scenery = new Map<RtObject, { x0: number; y0: number; x1: number; y1: number }>();
+  private scenery = new Map<RtObject, {
+    rect: { x0: number; y0: number; x1: number; y1: number };
+    /** What was drawn there, so a change can be noticed. */
+    at: string;
+    /** The last cycle this was in the cast. */
+    seen: number;
+  }>();
+  private castEpoch = 0;
+
+  /** Everything about a view that decides what lands on the screen. */
+  private sceneryAt(o: RtObject): string {
+    return `${s16(u16(this.prop(o, 'x')))},${s16(u16(this.prop(o, 'y')))},` +
+      `${this.prop(o, 'view')},${this.prop(o, 'loop')},${this.prop(o, 'cel')},` +
+      `${s16(u16(this.prop(o, 'z')))}`;
+  }
 
   private drawCast(castH: number) {
     this.showPendingPic();
-    for (const [o, r] of this.scenery) {
-      if (!(u16(this.prop(o, 'signal')) & 0x0008)) continue;   // still showing
-      this.screen.castCovered(r.x0, r.y0, r.x1, r.y1);
-      this.scenery.delete(o);
+    this.castEpoch++;
+    for (const [o, e] of this.scenery) {
+      const gone = (u16(this.prop(o, 'signal')) & 0x0008) !== 0;
+      if (!gone && this.sceneryAt(o) === e.at) continue;   // still where it was
+      this.screen.castCovered(e.rect.x0, e.rect.y0, e.rect.x1, e.rect.y1);
+      this.scenery.delete(o);          // redrawn below if it is still about
     }
     this.screen.restoreCastAreas();
     const drawn: Array<{ o: RtObject; cel: Cel; left: number; top: number;
@@ -1556,8 +1574,9 @@ export class PMachine {
        */
       const scenery = (u16(this.prop(o, 'signal')) & SIGNAL_STOP_UPDATE) !== 0;
       if (scenery)
-        this.scenery.set(o, { x0: r.left, y0: r.top,
-                              x1: r.left + cel.width, y1: r.top + cel.height });
+        this.scenery.set(o, {
+          rect: { x0: r.left, y0: r.top, x1: r.left + cel.width, y1: r.top + cel.height },
+          at: this.sceneryAt(o), seen: this.castEpoch });
       drawn.push({ o, cel, left: r.left, top: r.top, pri, scenery,
                    y: s16(u16(this.prop(o, 'y'))), z: s16(u16(this.prop(o, 'z'))),
                    order: order++ });
@@ -1573,6 +1592,9 @@ export class PMachine {
      * was drawn last.  Ties fall back to z, then to the order the game
      * gave them, so two things at the same depth keep their arrangement.
      */
+    // Scenery that is no longer in the cast has become part of the
+    // scene; there is nothing left to take it off, so stop watching it.
+    for (const [o, e] of this.scenery) if (e.seen !== this.castEpoch) this.scenery.delete(o);
     drawn.sort((a, b) => (a.y - b.y) || (a.z - b.z) || (a.order - b.order));
     // Each cel writes its priority as well as testing against it, so a
     // member drawn later cannot paint over one that is nearer the front.
@@ -2835,9 +2857,19 @@ export class PMachine {
     const i = o.indexOfSelector(this.sel(name));
     return i < 0 ? dflt : o.props[i];
   }
+  /**
+   * A property is a word, and arithmetic on one wraps.
+   *
+   * Handles do not: this machine keeps object and buffer references in
+   * properties too, and those are tagged above the sixteenth bit, so
+   * they are stored whole.  Everything else is sign-extended from the
+   * low word, as the games' own arithmetic does.
+   */
+  static word(v: number) { return (v > 0 && (v & REF_TAG)) ? v : ((v << 16) >> 16); }
+
   setProp(o: RtObject, name: string, v: number) {
     const i = o.indexOfSelector(this.sel(name));
-    if (i >= 0) o.props[i] = v;
+    if (i >= 0) o.props[i] = PMachine.word(v);
   }
 
   /** Decoded font, cached. */
