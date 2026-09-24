@@ -43,6 +43,22 @@ export class Game {
   private codecs = new Map<number, string | null>();
   readonly resources = new Map<string, ResourceInfo>();
 
+  /**
+   * A plain file from the game's directory, by name, ignoring case.
+   *
+   * Almost everything a game owns is inside its volumes, but not quite
+   * everything: the earliest SCI0 games keep their AdLib instruments in
+   * the driver they shipped with rather than in a patch resource.
+   */
+  file(name: string): Uint8Array | null {
+    const want = name.toUpperCase();
+    for (const n of this.src.names()) {
+      if (n.toUpperCase() !== want) continue;
+      try { return this.src.read(n); } catch { return null; }
+    }
+    return null;
+  }
+
   constructor(src: ResourceSource) {
     this.src = src;
     let mapName: string | null = null;

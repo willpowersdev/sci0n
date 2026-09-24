@@ -146,7 +146,7 @@ console.log('\nthe prompt the game would have shown');
   }
 }
 
-console.log('\nthe game it runs instead');
+console.log('\nthe intro it plays');
 {
   const g = new Game(nodeSource(dirOf('kq4sci', 'KQ4')));
   const idx = new Index(g);
@@ -154,54 +154,63 @@ console.log('\nthe game it runs instead');
   let clock = 0;
   s.now = () => clock;
   const step = () => { clock += 1000 / 60; return s.tick(); };
+  const box = (s.vm as unknown as { sounds: {
+    bank: unknown[] | null; playing: number[]; mix(o: Float32Array): void } }).sounds;
+
+  check(box.bank !== null && (box.bank?.length ?? 0) >= 48,
+    `the instruments come out of adl.drv: ${box.bank?.length ?? 0} of them`);
 
   /**
-   * A cheap signature of the screen, to tell a picture from a freeze.
+   * The intro is paced by its music, not by a timer.
+   *
+   * Each scene runs until its piece ends, so a game that cannot start
+   * a piece never leaves the first one.  This sat on the throne room
+   * with nothing moving: the music was never created, so the end it
+   * was waiting for never came.
    */
-  const shot = () => {
-    let h = 0;
-    const v = s.screen.visual;
-    for (let i = 0; i < v.length; i += 7) h = (h * 31 + v[i]) | 0;
-    return h;
-  };
-
   let st = s.tick();
-  const pics = new Set<number>();
-  const screens = new Set<number>();
-  for (let i = 0; i < 4000 && st.running; i++) {
+  const pics: Array<[number, number]> = [];
+  const heard = new Set<number>();
+  let peak = 0;
+  const buf = new Float32Array(2048);
+  for (let i = 0; i < 9000 && st.running; i++) {
     st = step();
-    if (st.picture >= 0) pics.add(st.picture);
-    if (i % 400 === 0) screens.add(shot());
+    for (const n of box.playing) heard.add(n);
+    if (st.picture >= 0 && (!pics.length || pics[pics.length - 1][0] !== st.picture))
+      pics.push([st.picture, i]);
+    // Pull the mix as the page does, during the second scene.  That
+    // one is sound 2, which is 894 notes and not a drum among them --
+    // the drums are synthesised without reference to the bank, so a
+    // piece with any in it would sound whether the instruments loaded
+    // or not, and would prove nothing about them.
+    if (i > 2200 && i < 3000) { box.mix(buf); for (const v of buf) { const a = Math.abs(v); if (a > peak) peak = a; } }
   }
 
-  // 991 is the blank black backdrop the copy-protection room draws, and
-  // for a long time it was the only picture this game ever managed.
-  const real = [...pics].filter(p => p !== 991);
-  check(real.length > 0, `it draws ${real.length ? `picture ${real.join(', ')}` : 'nothing but the blank backdrop'}`);
+  check(pics.length >= 3, `it moves through ${pics.length} scenes: ` +
+    pics.map(([p, f]) => `${p}@${(f / 60).toFixed(0)}s`).join(' -> '));
+  check(heard.size >= 2, `${heard.size} pieces of music play: ${[...heard].join(', ')}`);
 
   /**
-   * Is it a scene, or a screen with a box on it?
+   * Is there a sound, or only a piece that says it is playing?
    *
-   * Counted in colours rather than in pixels: the broken build filled
-   * a dialog with white on black and could pass a test that only asked
-   * how much had been painted.  A drawn room uses the palette.
+   * Taken off the mixer the page pulls from, over a piece with no
+   * percussion in it, so what is heard is the instrument bank and
+   * nothing else.  A bank read from the wrong place, or a header
+   * measured one resource at a time, both leave a piece that runs its
+   * whole length in silence.
    */
-  const used = new Set(s.screen.visual);
-  check(used.size >= 8, `${used.size} colours are on the screen`);
-
-  check(screens.size >= 5, `${screens.size} of 10 sampled frames differ -- it is moving`);
-  check(st.running, 'and it is still running');
+  check(peak > 0.05, `the chip is sounding: peak ${peak.toFixed(3)}`);
 
   /**
-   * The work is the tell.
+   * A piece survives being disposed in the middle of starting itself.
    *
-   * Every property send in this game came back zero when the low bit
-   * was not masked off, which does not stop the machine -- it stops
-   * the game, quietly, while the interpreter goes on being busy about
-   * nothing.  A game that is actually playing gets through millions of
-   * instructions in four thousand frames.
+   * `Sound::play` sets a flag, calls `dispose` on itself, puts the flag
+   * back and carries on using `self` -- SCI hands a disposed clone to
+   * the next collection rather than freeing it there and then.  Freeing
+   * it at the call left the music created and thrown away in the same
+   * breath, which is the other half of why this intro stood still.
    */
-  check(st.instructions > 500_000, `${(st.instructions / 1000).toFixed(0)}k instructions of it`);
+  check(heard.has(2), `the intro's own music (2) is among them`);
 }
 
 console.log(`\n${checked - failed}/${checked} early-SCI0 checks passed`);

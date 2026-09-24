@@ -47,9 +47,16 @@ const real = readdirSync(ROOT).filter(n => {
 check(Object.keys(manifest).sort().join() === real.join(),
   `every game is listed and nothing else (${Object.keys(manifest).length} of ${real.length})`);
 
-/** Only what the interpreter opens: the map and the numbered volumes. */
+/**
+ * Only what the interpreter opens.
+ *
+ * The map and the numbered volumes, and `adl.drv`, which the sound box
+ * asks every game for: the earliest ones keep their AdLib instruments
+ * in the driver rather than in a patch resource, and a game that has
+ * the patch resource never reads it.  A few kilobytes either way.
+ */
 const stray = Object.entries(manifest)
-  .flatMap(([g, fs]) => fs.filter(f => !/^RESOURCE\.(MAP|\d+)$/i.test(f)).map(f => `${g}/${f}`));
+  .flatMap(([g, fs]) => fs.filter(f => !/^(RESOURCE\.(MAP|\d+)|adl\.drv)$/i.test(f)).map(f => `${g}/${f}`));
 check(stray.length === 0,
   `nothing is listed that the loader would not open (${stray.slice(0, 3).join(' ') || 'none'})`);
 

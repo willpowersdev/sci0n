@@ -462,6 +462,13 @@ export class PMachine {
       unresolvedSends: 0, unresolvedKind: new Map(), maxStack: 0, maxDepth: 0,
       budget: limit, deadline,
     };
+    // A fresh cycle is where a disposed clone is actually collected,
+    // which is late enough for the cycle that disposed it to finish
+    // using it.
+    if (!opts.resume) {
+      for (const h of this.disposed) this.clones.delete(h);
+      this.disposed.clear();
+    }
     const base = opts.resume ? 0 : this.frames.length;
     const floor = opts.resume ? 0 : this.stack.length;
     if (!opts.resume) {
@@ -1323,6 +1330,8 @@ export class PMachine {
   }
 
   private clones = new Map<number, RtObject>();
+  /** Clones disposed during this cycle, swept at the start of the next. */
+  private disposed = new Set<number>();
   /**
    * Lists and nodes are kernel-owned structures a script only ever holds
    * a handle to, so they live here rather than in script memory.  Handles
@@ -1541,7 +1550,19 @@ export class PMachine {
     switch (this.index.kernelName(id)) {
       case 'ScriptID': return this.scriptID(args[0] ?? 0, args[1] ?? 0);
       case 'Clone': return this.cloneObject(args[0] ?? 0);
-      case 'DisposeClone': this.clones.delete(args[0] ?? 0); return 0;
+      /**
+       * Marked for collection, not freed on the spot.
+       *
+       * SCI hands a disposed clone to the next garbage collection and
+       * leaves it readable until then, and the scripts rely on it.
+       * `Sound::play` disposes itself deliberately -- it sets a flag,
+       * calls `dispose`, puts the flag back -- and then goes straight
+       * on to `init` and to `DoSound` with the same `self`.  Freeing it
+       * at the call left every one of those talking to a handle that
+       * no longer named anything, so KQ4's intro music was created and
+       * thrown away in the same breath and never played a note.
+       */
+      case 'DisposeClone': this.disposed.add(args[0] ?? 0); return 0;
       case 'IsObject': return this.resolveTarget(null, args[0] ?? 0) ? 1 : 0;
       case 'RespondsTo': {
         const o = this.resolveTarget(null, args[0] ?? 0);

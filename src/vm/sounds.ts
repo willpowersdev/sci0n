@@ -19,8 +19,8 @@
  */
 import type { Game } from '../resources.ts';
 import { type Index, SciObject, type Script } from '../script.ts';
-import { parseSound, type Sound } from '../sound.ts';
-import { parseBank, type Instrument } from '../opl/patch.ts';
+import { detectHeaderSize, parseSound, type Sound } from '../sound.ts';
+import { parseBank, bankInDriver, type Instrument } from '../opl/patch.ts';
 import { Player } from '../opl/player.ts';
 import { OPL_RATE } from '../opl/opl2.ts';
 import { parsePatchBank, gmPatchMap } from '../mt32.ts';
@@ -147,9 +147,13 @@ export class SoundBox {
   constructor(game: Game, index?: Index) {
     this.game = game;
     if (index) { try { this.detectDialect(index); } catch { /* assume SCI0 */ } }
-    // The AdLib bank is patch resource 3.  A game without one can still
-    // be played; it simply makes no music.
+    // The AdLib bank is patch resource 3, and for the earliest games --
+    // KQ4 here -- it is inside the driver they shipped with instead.
     try { this.bank = parseBank(game.data(9, 3)); } catch { this.bank = null; }
+    if (!this.bank) {
+      const drv = game.file('adl.drv');
+      if (drv) { try { this.bank = bankInDriver(drv); } catch { this.bank = null; } }
+    }
     // The MT-32 bank, which is the only place the game says what its
     // programs were meant to sound like.  A game without one can still
     // play on the chip; it simply cannot be mapped to General MIDI.
@@ -179,17 +183,53 @@ export class SoundBox {
 
   private gainFor() { return this.muted ? 0 : this.masterVolume / 15; }
 
+  private header: number | null = null;
+  /**
+   * How long this game's sound headers are, decided once for the game.
+   *
+   * A single resource does not always say: more than one header length
+   * will scan it without complaint, and the wrong one can still yield a
+   * stream that looks reasonable.  KQ4's banner music parsed as 3654
+   * events instead of 3658 that way -- all the notes, none of the
+   * channel setup that goes before them -- and played in silence.
+   * Asking a spread of the game's own sounds which length fits them all
+   * settles it, because a header that is wrong will fail on some of
+   * them even when it passes on one.
+   */
+  private headerSize(): number | undefined {
+    if (this.header === null) {
+      const datas: Uint8Array[] = [];
+      for (const r of this.game.byType('sound')) {
+        if (datas.length >= 12) break;
+        try { const d = this.game.tryData('sound', r.number); if (d) datas.push(d); } catch { /* skip */ }
+      }
+      this.header = datas.length ? detectHeaderSize(datas) : -1;
+    }
+    return this.header >= 0 ? this.header : undefined;
+  }
+
   /** Load a piece and hold it ready, without sounding it. */
   init(handle: number, number: number) {
     const existing = this.live.get(handle);
     if (existing && existing.number === number) return;
-    if (!this.bank) return;
     let data: Uint8Array | null = null;
     try { data = this.game.tryData('sound', number); } catch { data = null; }
     if (!data) return;
-    const sound = parseSound(data);
+    const sound = parseSound(data, this.headerSize());
     if (!sound) return;
-    const player = new Player(sound, this.bank);
+    /**
+     * A game with no instruments still has to keep time.
+     *
+     * The piece is loaded and run whether or not there is a bank to
+     * play it with: an empty one leaves every note silent, which the
+     * player already does for a program it has not got.  Refusing to
+     * load it at all, as this did, stops the clock as well as the
+     * sound -- and the scripts are listening to that clock.  KQ4's
+     * intro waits for its title music to finish before it moves on,
+     * so with no bank it waited on a piece that was never playing and
+     * sat on the same screen for ever.
+     */
+    const player = new Player(sound, this.bank ?? []);
     player.gain = this.gainFor();
     this.live.set(handle, { handle, number, sound, player, playing: false,
                             reported: false, cueIndex: 0, gm: null, gmIndex: 0,

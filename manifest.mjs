@@ -8,10 +8,13 @@
  *   { "camelot": ["RESOURCE.MAP", "RESOURCE.000", ...], ... }
  *
  * A folder counts as a game when it has a RESOURCE.MAP, and only the
- * files the interpreter opens are listed -- the map and the numbered
- * volumes.  Everything else a Sierra folder carries, the drivers and
- * the executable and the saved games, is never read and does not need
- * uploading.
+ * files the interpreter opens are listed: the map, the numbered
+ * volumes, and `adl.drv`.  The driver is there for the earliest games
+ * only -- KQ4 keeps its AdLib instruments inside it rather than in a
+ * patch resource, and without it that game is silent -- but it costs a
+ * few kilobytes and the later games simply do not read it.  Everything
+ * else a Sierra folder carries, the executable and the saved games and
+ * the other drivers, is never read and does not need uploading.
  *
  *   node manifest.mjs [games-directory] [output-file]
  *
@@ -21,7 +24,7 @@
 import { readdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-const KEEP = /^RESOURCE\.(MAP|\d+)$/i;
+const KEEP = /^(RESOURCE\.(MAP|\d+)|adl\.drv)$/i;
 const dir = process.argv[2] ?? 'games';
 const to = process.argv[3] ?? join(dir, 'games.json');
 

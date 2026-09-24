@@ -101,3 +101,38 @@ export function applyOp(o: Operator, s: OperatorPatch) {
   o.dr = s.dr; o.rr = s.rr; o.tl = s.tl; o.am = s.am; o.vib = s.vib;
   o.ksr = s.ksr; o.wave = s.wave;
 }
+
+/**
+ * The instrument bank Sierra's earliest AdLib driver carries itself.
+ *
+ * Before the games shipped `patch.003` the instruments lived in
+ * `adl.drv`, and KQ4 is the one here still built that way: it has no
+ * patch resource at all, so without this it has no music.
+ *
+ * The table is found rather than looked up at a fixed address, so it
+ * identifies itself: forty-eight consecutive well-formed records is not
+ * something a stretch of 8086 happens to be.  Each is judged on the
+ * fields that cannot hold arbitrary values -- two wave selects of two
+ * bits, an algorithm bit, three bits of feedback -- and the run has to
+ * be the only one in the file, or this is not what was found.  The
+ * later driver, whose games carry `patch.003`, has no such run and is
+ * correctly left alone.
+ */
+export function bankInDriver(d: Uint8Array): Instrument[] | null {
+  const COUNT = 48;
+  const shaped = (o: number) =>
+    d[o + 26] <= 3 && d[o + 27] <= 3 && d[o + 12] <= 1 && d[o + 2] <= 7;
+  const blank = (o: number) => d.subarray(o, o + RECORD).every(b => b === 0);
+  const runs: number[] = [];
+  for (let o = 0; o + COUNT * RECORD <= d.length; o++) {
+    let n = 0, live = 0;
+    while (o + (n + 1) * RECORD <= d.length && shaped(o + n * RECORD)) {
+      if (!blank(o + n * RECORD)) live++;
+      n++;
+    }
+    // Mostly-empty records are a field of zeros somewhere, not a bank.
+    if (n >= COUNT && live >= COUNT * 0.8) { runs.push(o); o += n * RECORD - 1; }
+  }
+  if (runs.length !== 1) return null;
+  return parseBank(d.subarray(runs[0], runs[0] + COUNT * RECORD));
+}
