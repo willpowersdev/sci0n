@@ -178,6 +178,23 @@ const ALIASES: Readonly<Record<string, string>> = {
    * it does not hold for anything GM can really make.
    */
   coins: 'Tinkle Bell',
+  /**
+   * Three more the games strike rather than play, chosen from how they
+   * are built rather than from what they are called.  The bank's AdLib
+   * definitions say what kind of sound each is, and that is a better
+   * guide than the name: an "Armor" that turned out to be a soft pad
+   * would want a pad, whatever it is called.
+   *
+   * Swords is a fast attack on a very high, inharmonic multiplier --
+   * bright, clangy and gone at once, which is a struck metal bar.
+   * Armor has a slow-rising second operator over a quick decay and is
+   * played low, 29 to 52, so it rings rather than pings.  Thunder rises
+   * from nothing on both operators, the upper one inharmonic: a noisy
+   * swell, which is the one shape General MIDI really does have.
+   */
+  sword: 'Tubular Bells',
+  armor: 'Steel Drums', armour: 'Steel Drums',
+  thunder: 'Reverse Cymbal',
   telephone: 'Telephone Ring', birdtweet: 'Bird Tweet', ratsqueek: 'Bird Tweet',
   ocean: 'Seashore', wtrfall: 'Seashore', splash: 'Seashore', bubbles: 'Seashore',
   wind: 'Seashore', applause: 'Applause', explode: 'Gunshot', firedart: 'Gunshot',

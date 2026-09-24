@@ -78,8 +78,17 @@ const keys = new Set(GM_NAMES.map(n => n.toLowerCase().replace(/[^a-z0-9]/g, '')
 check(keys.size === GM_NAMES.length,
   `all ${GM_NAMES.length} GM names fold to distinct keys (${keys.size} distinct)`);
 
-// --- what must not be mapped -------------------------------------------
-for (const effect of ['Swords  MS', 'Horse1  MS', 'CstlGateMS', 'AirLock2MS', 'TakeOff MS'])
+/**
+ * What must not be mapped.
+ *
+ * The line is whether the sound set has something of the same kind, not
+ * whether the name looks like an instrument.  A horse, a castle gate,
+ * an airlock and a rocket lifting off have no stand-in among a hundred
+ * and twenty-eight instruments, and giving them one would be worse than
+ * the silence.  Swords used to be on this list and is not any more: it
+ * is a struck metal bar, which the sound set does have.
+ */
+for (const effect of ['Horse1  MS', 'CstlGateMS', 'AirLock2MS', 'TakeOff MS'])
   check(gmForTimbre(effect) === UNMAPPED,
     `${JSON.stringify(effect)} is left unmapped rather than given an instrument`);
 
@@ -197,6 +206,41 @@ console.log('\neffects:');
   const ev = toGeneralMidi(snd, map);
   const notes = ev.filter(e => (e.status & 0xF0) === 0x90 && e.b > 0).length;
   check(notes > 0, `the purse clink is audible (${notes} notes survive the translation)`);
+}
+
+/**
+ * The struck effects the games use as effects.
+ *
+ * Each is checked by the instrument it lands on rather than merely by
+ * being mapped, since "mapped" is satisfied by mapping it to anything.
+ * The choices come from the bank's own AdLib definitions -- a fast
+ * attack on a high inharmonic multiplier is a struck bar, a slow rise
+ * on both operators is a swell -- and not from the names, which can
+ * describe a sound the patch does not make.
+ */
+for (const [timbre, wanted] of [
+  ['Swords  MS', 'Tubular Bells'],
+  ['Armor   MS', 'Steel Drums'],
+  ['Thunder MS', 'Reverse Cymbal'],
+  ['ClangBell', 'Tubular Bells'],
+] as const) {
+  const got = gmForTimbre(timbre);
+  check(got !== UNMAPPED && GM_NAMES[got] === wanted,
+    `${JSON.stringify(timbre)} -> ${wanted} (got ${got === UNMAPPED ? 'nothing' : GM_NAMES[got]})`);
+}
+
+/**
+ * And a sound that uses one has to come out of the translation with
+ * notes in it.  A mapping in the table is not a sound on the wire: the
+ * channel carrying an unmapped patch is dropped whole, so this asks a
+ * real resource -- Camelot's sound 33, which is armour and nothing
+ * else for most of its length.
+ */
+{
+  const ARMOUR = 33;
+  const snd = parseSound(g.data(4, ARMOUR), hdr)!;
+  const notes = toGeneralMidi(snd, map).filter(e => (e.status & 0xF0) === 0x90 && e.b > 0).length;
+  check(notes > 0, `sound ${ARMOUR} is audible (${notes} notes survive)`);
 }
 
 console.log(`\n${checked - failed}/${checked} General MIDI checks passed`);
