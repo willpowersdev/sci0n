@@ -28,6 +28,7 @@
  */
 import type { Game } from './resources.ts';
 import { nameTable, classTable, SELECTORS, KERNEL_NAMES, CLASS_TABLE } from './vocab.ts';
+import { patchScript } from './patches.ts';
 
 export const BLOCK_NAMES: Record<number, string> = {
   0: 'terminator', 1: 'object', 2: 'code', 3: 'synonyms', 4: 'said',
@@ -246,10 +247,16 @@ export class Index {
       ? this.kernel[kid] : `kernel${kid}`;
   }
 
+  /** What was changed in the games' own scripts, and why. */
+  readonly patched: string[] = [];
+
   script(number: number): Script | null {
     if (!this.scripts.has(number)) {
       const d = this.game.tryData('script', number);
-      this.scripts.set(number, d ? new Script(d, number) : null);
+      if (!d) { this.scripts.set(number, null); return null; }
+      const { data, applied } = patchScript(number, d);
+      this.patched.push(...applied);
+      this.scripts.set(number, new Script(data, number));
     }
     return this.scripts.get(number)!;
   }
