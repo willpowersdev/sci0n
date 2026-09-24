@@ -1,4 +1,4 @@
-# sci0web
+# sci0n
 
 A TypeScript reimplementation of Sierra's **SCI0** engine, running in the browser:
 resource decoding, EGA graphics, script disassembly, a PMachine interpreter, and

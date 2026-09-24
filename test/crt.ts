@@ -33,7 +33,7 @@ if (!chrome) {
   process.exit(0);
 }
 
-const dir = mkdtempSync(join(tmpdir(), 'sci0web-crt-'));
+const dir = mkdtempSync(join(tmpdir(), 'sci0n-crt-'));
 execFileSync('npx', ['esbuild', 'test/crt/harness.ts', '--bundle', '--format=esm',
                      `--outfile=${join(dir, 'harness.js')}`], { stdio: 'pipe' });
 const page = readFileSync('test/crt/page.html');

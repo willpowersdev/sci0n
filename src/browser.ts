@@ -94,17 +94,56 @@ async function sourceFromFiles(files: FileList): Promise<ResourceSource> {
 }
 
 /**
- * A ResourceSource backed by the server's `/games/<name>/` route, so the
- * page can be opened directly at a game rather than picking a folder.
+ * Where the games are, relative to the page.
+ *
+ * Relative on purpose.  An absolute `/games/` only works when the app
+ * is at the root of its site; written this way it follows the page,
+ * so a copy under `example.com/sci/` looks under `sci/games/`.
+ */
+const GAMES = 'games/';
+
+/**
+ * What the server has, in one file.
+ *
+ * A plain web server has no answer for "what is in this directory" --
+ * it serves files, not listings -- so a deployment carries a manifest
+ * naming each game and its resources.  `npm run manifest` writes one.
+ *
+ * Read once and kept.  A server that has none is not broken: the
+ * directory routes below are asked instead, which is what the
+ * development server answers and what a directory index provides.
+ */
+let manifest: Record<string, string[]> | null | undefined;
+
+async function readManifest(): Promise<Record<string, string[]> | null> {
+  if (manifest !== undefined) return manifest;
+  manifest = null;
+  try {
+    const r = await fetch(`${GAMES}games.json`);
+    // A missing file can come back as a 404 or as somebody's friendly
+    // HTML page, so the parse has to be allowed to fail too.
+    if (r.ok) {
+      const m = await r.json();
+      if (m && typeof m === 'object' && !Array.isArray(m)) manifest = m;
+    }
+  } catch { /* no manifest; the listing routes still exist */ }
+  return manifest ?? null;
+}
+
+/**
+ * A ResourceSource backed by the server, so the page can be opened
+ * directly at a game rather than picking a folder.
  */
 async function sourceFromServer(name: string): Promise<ResourceSource> {
-  const listing: string[] = await (await fetch(`/games/${name}/`)).json();
+  const m = await readManifest();
+  const listing: string[] = m?.[name]
+    ?? await (await fetch(`${GAMES}${name}/`)).json();
   const want = listing.filter(n =>
     /^RESOURCE\.(MAP|\d+)$/i.test(n));
   if (!want.length) throw new Error(`no SCI0 resources in ${name}`);
   const bytes = new Map<string, Uint8Array>();
   await Promise.all(want.map(async n => {
-    const r = await fetch(`/games/${name}/${n}`);
+    const r = await fetch(`${GAMES}${name}/${n}`);
     bytes.set(n, new Uint8Array(await r.arrayBuffer()));
   }));
   return { names: () => [...bytes.keys()], read: (n) => bytes.get(n)! };
@@ -1506,10 +1545,14 @@ async function openGame(name: string) {
  */
 async function showGameList() {
   let games: string[] = [];
-  try {
-    const r = await fetch('/games/');
-    if (r.ok) games = await r.json();
-  } catch { /* opened without the server; the picker is the way in */ }
+  const m = await readManifest();
+  if (m) games = Object.keys(m).sort();
+  else {
+    try {
+      const r = await fetch(GAMES);
+      if (r.ok) games = await r.json();
+    } catch { /* opened without a server; the picker is the way in */ }
+  }
   if (!games.length) {
     $('gameinfo').textContent = 'Choose a game folder';
     return;
