@@ -86,7 +86,8 @@ if (browserWs) {
 const stopChrome = () => { try { process.kill(-child.pid!, 'SIGKILL'); } catch { child.kill('SIGKILL'); } };
 
 /** What the page reports about itself, as JSON. */
-let found: { menu: string[]; selected: string; rows: number; fetched: string[] } | null = null;
+let found: { menu: string[]; labels: string[]; selected: string; rows: number;
+             fetched: string[]; picker: boolean } | null = null;
 if (wsUrl) {
   const ws = new WebSocket(wsUrl);
   await new Promise<void>(r => { ws.onopen = () => r(); });
@@ -113,7 +114,9 @@ if (wsUrl) {
         if (!sel || sel.hidden || sel.options.length < 2) return '';
         return JSON.stringify({
           menu: [...sel.options].map(o => o.value).filter(Boolean),
+          labels: [...sel.options].filter(o => o.value).map(o => o.textContent ?? ''),
           selected: sel.value,
+          picker: !!document.getElementById('pick'),
           rows: document.getElementById('list')?.children.length ?? 0,
           fetched: performance.getEntriesByType('resource')
             .map(e => e.name.split('/').pop()).filter(n => /^(RESOURCE|adl)/i.test(n ?? '')),
@@ -143,6 +146,29 @@ if (!found) {
 
 check(found.menu.length >= 2,
   `the served games are offered with one already open: ${found.menu.join(', ')}`);
+
+/**
+ * Named, not abbreviated.
+ *
+ * The folders carry ScummVM's short names because that is how a
+ * deployed copy is trimmed, and `kq4sci` is not what the game is
+ * called.  Every folder in the shipped set has a title, so a label
+ * that is still its folder name means the table has been left behind.
+ */
+const bare = found.menu.filter((v, i) => found.labels[i] === v);
+check(bare.length === 0,
+  `every game is offered by its title${bare.length ? ` -- ${bare.join(', ')} still show the folder` : ''}`);
+const kq4 = found.menu.indexOf('kq4sci');
+check(kq4 < 0 || /King's Quest IV/.test(found.labels[kq4]),
+  kq4 < 0 ? 'kq4sci is not in this copy' : `kq4sci reads "${found.labels[kq4]}"`);
+
+/**
+ * And there is no local folder chooser.
+ *
+ * It was there for a copy the server could not see, and it is the
+ * server's list now.
+ */
+check(!found.picker, `the folder chooser is gone${found.picker ? ' -- IT IS STILL THERE' : ''}`);
 check(found.selected === 'kq4sci',
   `the one being played is the one shown as chosen (${found.selected || 'none'})`);
 // The sidebar list belongs to the resource browser once a game is open,

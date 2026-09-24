@@ -83,16 +83,6 @@ let anim: number | null = null;
 /** Preview frame time; the exported GIF uses the same. */
 const ANIM_MS = 140;
 
-/** A ResourceSource backed by the files the user selected. */
-async function sourceFromFiles(files: FileList): Promise<ResourceSource> {
-  const bytes = new Map<string, Uint8Array>();
-  for (const f of Array.from(files)) {
-    const name = f.name.toUpperCase();
-    if (name === 'RESOURCE.MAP' || /^RESOURCE\.\d+$/.test(name))
-      bytes.set(f.name, new Uint8Array(await f.arrayBuffer()));
-  }
-  return { names: () => [...bytes.keys()], read: (n) => bytes.get(n)! };
-}
 
 /**
  * Where the games are, relative to the page.
@@ -102,6 +92,45 @@ async function sourceFromFiles(files: FileList): Promise<ResourceSource> {
  * so a copy under `example.com/sci/` looks under `sci/games/`.
  */
 const GAMES = 'games/';
+
+/**
+ * What each folder is actually called.
+ *
+ * The folders carry ScummVM's short names, because that is what a
+ * deployed copy is trimmed into, and the games themselves are no help:
+ * the object in script 0 is named ARTHUR, KQ4, CB1, HQ -- abbreviations
+ * Sierra used internally, not titles anyone would recognise.  So the
+ * list is here, and it covers the SCI0 releases rather than only the
+ * ones to hand, since a folder this does not know shows its own name
+ * and that is the thing worth avoiding.
+ *
+ * `qfg1` is named for the box it first came in.  Sierra sold it as
+ * Hero's Quest, lost the name to a trademark, and reprinted it as
+ * Quest for Glory I; the game object inside still says HQ.
+ *
+ * `qfg2` is SCI01 rather than SCI0 proper -- the same interpreter a
+ * year on -- and is here because this plays it.
+ */
+const TITLES: Record<string, string> = {
+  camelot: 'Conquests of Camelot: The Search for the Grail',
+  christmas1988: 'The Sierra Christmas Card',
+  hoyle1: 'Hoyle Official Book of Games: Volume 1',
+  hoyle2: 'Hoyle Official Book of Games: Volume 2',
+  iceman: 'Codename: ICEMAN',
+  kq1sci: "King's Quest: Quest for the Crown",
+  kq4sci: "King's Quest IV: The Perils of Rosella",
+  laurabow: "The Colonel's Bequest",
+  lsl2: 'Leisure Suit Larry 2: Goes Looking for Love',
+  lsl3: 'Leisure Suit Larry 3: Passionate Patti in Pursuit of the Pulsating Pectorals',
+  mothergoose: 'Mixed-Up Mother Goose',
+  pq2: 'Police Quest II: The Vengeance',
+  qfg1: "Hero's Quest: So You Want to Be a Hero",
+  qfg2: 'Quest for Glory II: Trial by Fire',
+  sq3: 'Space Quest III: The Pirates of Pestulon',
+};
+
+/** The title to show for a folder, or the folder's own name. */
+const titleOf = (name: string) => TITLES[name.toLowerCase()] ?? name;
 
 /**
  * What the server has, in one file.
@@ -1534,27 +1563,15 @@ for (const [name, type] of [['mousedown', EV.mouseDown], ['mouseup', EV.mouseUp]
   });
 }
 
-($('pick') as HTMLInputElement).onchange = async (e) => {
-  const files = (e.target as HTMLInputElement).files;
-  if (!files?.length) return;
-  try {
-    game = new Game(await sourceFromFiles(files));
-  } catch (err) {
-    $('gameinfo').textContent = 'not an SCI0 game folder: ' + (err as Error).message;
-    return;
-  }
-  adopt(game);
-};
-
 /** Load one game from the server and show it. */
 async function openGame(name: string) {
-  $('gameinfo').textContent = `loading ${name}…`;
+  $('gameinfo').textContent = `loading ${titleOf(name)}…`;
   try {
     adopt(new Game(await sourceFromServer(name)));
-    document.title = `SCI0 Explorer — ${name}`;
+    document.title = `SCI0 Explorer — ${titleOf(name)}`;
     history.replaceState(null, '', `?game=${encodeURIComponent(name)}`);
   } catch (err) {
-    $('gameinfo').textContent = `could not load ${name}: ${(err as Error).message}`;
+    $('gameinfo').textContent = `could not load ${titleOf(name)}: ${(err as Error).message}`;
   }
 }
 
@@ -1578,17 +1595,17 @@ async function showGameList() {
     } catch { /* opened without a server; the picker is the way in */ }
   }
   if (!games.length) {
-    $('gameinfo').textContent = 'Choose a game folder';
+    $('gameinfo').textContent = 'no games on this server';
     return;
   }
-  $('gameinfo').textContent = `${games.length} games on this machine — pick one, ` +
-    `or use the chooser above for another copy`;
+  $('gameinfo').textContent = `${games.length} games — pick one`;
   const list = $('list');
   list.innerHTML = '';
   for (const name of games) {
     const d = document.createElement('div');
-    d.className = 'row';
-    d.textContent = name;
+    d.className = 'row game';
+    d.textContent = titleOf(name);
+    d.title = name;                     // the folder, for anyone who wants it
     d.onclick = () => openGame(name);
     list.append(d);
   }
@@ -1621,7 +1638,7 @@ async function fillGameMenu() {
   for (const name of games) {
     const o = document.createElement('option');
     o.value = name;
-    o.textContent = name;
+    o.textContent = titleOf(name);
     if (name === open) o.selected = true;
     sel.append(o);
   }
