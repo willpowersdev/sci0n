@@ -16,6 +16,7 @@ import { saidDecode, gameGroups, nameTable, stringTable, classTable,
 import { strings as textStrings } from './text.ts';
 import { Font, Cursor, CURSOR_SIZE, CURSOR_CLEAR } from './font.ts';
 import { parseSound, detectHeaderSize, DEVICE_ADLIB } from './sound.ts';
+import { revise } from './dictation.ts';
 import { parseBank, type Instrument } from './opl/patch.ts';
 import { Player, resample, TICKS_PER_SECOND } from './opl/player.ts';
 import { OPL_RATE } from './opl/opl2.ts';
@@ -336,6 +337,7 @@ function stopPlay() {
   field.removeEventListener('input', onDictate);
   field.blur();
   field.hidden = true;
+  clearDictation();
   ($('mic') as HTMLElement).hidden = true;
   ($('speed') as HTMLElement).hidden = true;
   ($('output') as HTMLElement).hidden = true;
@@ -363,30 +365,51 @@ function onPlayKey(e: KeyboardEvent) {
   if (e.key === 'Escape') session.screen.statusVisible = !session.screen.statusVisible;
   if (e.metaKey) return;                     // leave the browser's own shortcuts alone
   if (e.key.length === 1 && !e.ctrlKey && !e.altKey) return;   // the input event has it
+  // Backspace edits the field while there is anything in it, and the
+  // deletion is sent from there like any other revision.  Sending it
+  // here as well would take back two letters for one press.
+  if (e.key === 'Backspace' && dictated !== '') return;
   const m = keyMessage(e);
   if (m === null) return;
   e.preventDefault();
   session.key(m, (e.shiftKey ? MOD.shift : 0) | (e.ctrlKey ? MOD.ctrl : 0)
                  | (e.altKey ? MOD.alt : 0));
+  // The game has taken the line.  Leaving the words in the field would
+  // make the next thing said look like an edit of the last command.
+  if (e.key === 'Enter' || e.key === 'Escape') clearDictation();
+}
+
+/**
+ * How much of the field the game has already been told about.
+ *
+ * The field is not emptied as it is read; see `src/dictation.ts` for
+ * why, and for what is sent instead.
+ */
+let dictated = '';
+
+/** Start the line again, because the game has taken it. */
+function clearDictation() {
+  const el = $('dictate') as HTMLInputElement | null;
+  if (el) el.value = '';
+  dictated = '';
 }
 
 /**
  * Text arriving in the hidden field, by typing or by dictation.
  *
- * The field is emptied after every read, so whatever is in it is exactly
- * what is new.  Dictation inserts a whole phrase at once, which becomes
- * a run of keystrokes -- the game cannot tell the difference between
- * that and somebody typing quickly.
+ * Only the difference against what was sent last time goes to the game,
+ * so a phrase that dictation revises as it hears it arrives once.
  */
-function onDictate() {
+function onDictate(e?: Event) {
   const el = $('dictate') as HTMLInputElement;
-  const text = el.value;
-  el.value = '';
-  if (!session || !text) return;
-  for (const ch of text) {
-    const code = ch.charCodeAt(0);
-    if (code >= 32 && code < 256) session.key(code);
-  }
+  // An IME is still deciding; its own event says when it has settled.
+  // Dictation does not always announce itself this way, which is why
+  // the difference is taken rather than trusted to arrive whole.
+  if ((e as InputEvent | undefined)?.isComposing) return;
+  const now = el.value;
+  if (!session) { dictated = now; return; }
+  for (const k of revise(dictated, now)) session.key(k);
+  dictated = now;
 }
 
 /**
@@ -402,7 +425,7 @@ function grabFocus() {
   if (!session) return;
   const el = $('dictate') as HTMLInputElement;
   el.hidden = false;
-  el.value = '';
+  clearDictation();
   el.focus({ preventScroll: true });
 }
 
