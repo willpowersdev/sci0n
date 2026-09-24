@@ -3,7 +3,7 @@
  * tests; only the byte source and the rendering are browser-specific.
  * No game data ships with this -- the user points it at their own copy.
  */
-import { Game, TYPE_NAMES, type ResourceSource } from './resources.ts';
+import { Game, GAME_FILE, TYPE_NAMES, type ResourceSource } from './resources.ts';
 import { View, type Cel } from './view.ts';
 import { Picture, WIDTH, HEIGHT } from './pic.ts';
 import { EGA_RGB, BLENDED_RGB } from './ega.ts';
@@ -139,8 +139,7 @@ async function sourceFromServer(name: string): Promise<ResourceSource> {
   const m = await readManifest();
   const listing: string[] = m?.[name]
     ?? await (await fetch(`${GAMES}${name}/`)).json();
-  const want = listing.filter(n =>
-    /^RESOURCE\.(MAP|\d+)$/i.test(n));
+  const want = listing.filter(n => GAME_FILE.test(n));
   if (!want.length) throw new Error(`no SCI0 resources in ${name}`);
   const bytes = new Map<string, Uint8Array>();
   await Promise.all(want.map(async n => {
@@ -1595,9 +1594,52 @@ async function showGameList() {
   }
 }
 
+/**
+ * The games the server has, in a menu that stays put.
+ *
+ * `showGameList` fills the sidebar's list, but that list is the
+ * resource browser as soon as a game is open, so once you had picked
+ * one there was no way back to the others and the folder chooser --
+ * which is for a copy the server cannot see -- looked like the only
+ * way to change games.  This sits in the header instead and is filled
+ * once, whether a game is open or not.
+ */
+async function fillGameMenu() {
+  const sel = $('games') as HTMLSelectElement | null;
+  if (!sel) return;
+  let games: string[] = [];
+  const m = await readManifest();
+  if (m) games = Object.keys(m).sort();
+  else {
+    try {
+      const r = await fetch(GAMES);
+      if (r.ok) games = await r.json();
+    } catch { /* opened without a server; the chooser is the way in */ }
+  }
+  if (!games.length) return;                    // nothing served; stay hidden
+  const open = new URLSearchParams(location.search).get('game');
+  for (const name of games) {
+    const o = document.createElement('option');
+    o.value = name;
+    o.textContent = name;
+    if (name === open) o.selected = true;
+    sel.append(o);
+  }
+  sel.hidden = false;
+  sel.onchange = () => {
+    const name = sel.value;
+    if (!name) return;
+    // The address bar follows, so the page can be reloaded or shared
+    // at whichever game is being looked at.
+    history.replaceState(null, '', `?game=${encodeURIComponent(name)}`);
+    openGame(name);
+  };
+}
+
 (async () => {
   const q = new URLSearchParams(location.search);
   const name = q.get('game');
+  await fillGameMenu();
   if (name) await openGame(name);
   else await showGameList();
 })();

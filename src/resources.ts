@@ -12,6 +12,19 @@
  */
 import { lzw, lzw1, huffman, lzwProbe, lzw1Probe, huffmanProbe } from './compress.ts';
 
+/**
+ * The files an interpreter actually opens in a game's folder.
+ *
+ * The map and its numbered volumes, and `adl.drv`: the earliest SCI0
+ * games keep their AdLib instruments in the driver they shipped with
+ * rather than in a patch resource, and a copy fetched without it plays
+ * in silence.  A deployed copy is trimmed to this set, and the page
+ * fetches this set, so the two have to be the same list -- when they
+ * were not, the manifest carried the driver and the page never asked
+ * for it.
+ */
+export const GAME_FILE = /^(RESOURCE\.(MAP|\d+)|adl\.drv)$/i;
+
 export const TYPE_NAMES: Record<number, string> = {
   0: 'view', 1: 'pic', 2: 'script', 3: 'text', 4: 'sound',
   5: 'memory', 6: 'vocab', 7: 'font', 8: 'cursor', 9: 'patch',

@@ -24,7 +24,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync, statSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Game } from '../src/resources.ts';
+import { Game, GAME_FILE } from '../src/resources.ts';
 import { ROOT } from './games.ts';
 
 let failed = 0, checked = 0;
@@ -48,15 +48,27 @@ check(Object.keys(manifest).sort().join() === real.join(),
   `every game is listed and nothing else (${Object.keys(manifest).length} of ${real.length})`);
 
 /**
- * Only what the interpreter opens.
+ * Only what the interpreter opens, judged by the interpreter's own rule.
  *
- * The map and the numbered volumes, and `adl.drv`, which the sound box
- * asks every game for: the earliest ones keep their AdLib instruments
- * in the driver rather than in a patch resource, and a game that has
- * the patch resource never reads it.  A few kilobytes either way.
+ * `GAME_FILE` is what the page fetches, so asking the manifest against
+ * it is asking whether the two agree.  They did not: the manifest was
+ * taught to carry `adl.drv` for the earliest games, whose AdLib
+ * instruments live in the driver, and the page went on filtering it
+ * out again -- so the file was uploaded, served, and never asked for.
  */
 const stray = Object.entries(manifest)
-  .flatMap(([g, fs]) => fs.filter(f => !/^(RESOURCE\.(MAP|\d+)|adl\.drv)$/i.test(f)).map(f => `${g}/${f}`));
+  .flatMap(([g, fs]) => fs.filter(f => !GAME_FILE.test(f)).map(f => `${g}/${f}`));
+check(GAME_FILE.test('adl.drv') && GAME_FILE.test('ADL.DRV'),
+  'the rule admits the AdLib driver, whatever its case');
+check(!GAME_FILE.test('install.exe') && !GAME_FILE.test('KQ4SG.000'),
+  'and not the executable or the saved games');
+const needsDriver = Object.entries(manifest)
+  .filter(([g]) => g === 'kq4sci' || g === 'KQ4')
+  .map(([g, fs]) => `${g}:${fs.some(f => /^adl\.drv$/i.test(f))}`);
+if (needsDriver.length)
+  check(needsDriver.every(x => x.endsWith('true')),
+    `the game with no patch bank is given the driver (${needsDriver.join(' ')})`);
+
 check(stray.length === 0,
   `nothing is listed that the loader would not open (${stray.slice(0, 3).join(' ') || 'none'})`);
 

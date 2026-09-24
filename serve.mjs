@@ -76,4 +76,8 @@ createServer(async (req, res) => {
     });
     res.end(body);
   } catch { res.writeHead(404).end('not found'); }
-}).listen(8017, () => console.log('serving http://localhost:8017'));
+// `PORT=0` asks the system for a free one, which is how the page test
+// runs a server of its own without colliding with a copy already up.
+}).listen(Number(process.env.PORT ?? 8017), function () {
+  console.log(`serving http://localhost:${this.address().port}`);
+});
