@@ -2768,17 +2768,38 @@ export class PMachine {
          * The first argument selects the map; only the control one is
          * ever asked for here.
          */
-        if (args.length >= 5) {
-          const x1 = s16(u16(a1)), y1 = s16(u16(args[2]));
-          const x2 = s16(u16(args[3])), y2 = s16(u16(args[4]));
+        /**
+         * The map is optional, and the count is what says it is there.
+         *
+         * A rectangle is four numbers and a point is two, so an odd
+         * count means the first one chooses the map and an even one
+         * means the coordinates start at the front.  Taking it as
+         * always present read KQ4's `Act::onControl` -- which passes
+         * its base rectangle bare -- as a question about the point
+         * (top, right): a y of 277 on a screen 190 high, clamped away
+         * to nothing, answered "no control colours here" every time.
+         *
+         * `findPosn` will not put an actor down until that answer is
+         * something, so the fairies in the Tamir scene were refused
+         * every spot it tried.  The search widens as it fails, and it
+         * failed for ever: the actor was thrown further and further
+         * out until it left the room, and the scene never went on.
+         */
+        const mapped = (args.length & 1) === 1;
+        const at = mapped ? 1 : 0;
+        const n = args.length - at;
+        if (n >= 4) {
+          const x1 = s16(u16(args[at])), y1 = s16(u16(args[at + 1]));
+          const x2 = s16(u16(args[at + 2])), y2 = s16(u16(args[at + 3]));
           return this.controlBits(Math.min(x1, x2), Math.min(y1, y2),
                                   Math.max(x1, x2) + 1, Math.max(y1, y2) + 1);
         }
-        if (args.length >= 3) {
-          const x = s16(u16(a1)), y = s16(u16(args[2]));
+        if (n >= 2) {
+          const x = s16(u16(args[at])), y = s16(u16(args[at + 1]));
           return this.controlBits(x, y, x + 1, y + 1);
         }
-        const o = this.resolveTarget(null, a1);
+        // A few scripts hand over the actor itself instead of numbers.
+        const o = this.resolveTarget(null, args[at] ?? 0);
         if (!o) return 0;
         return this.controlBits(s16(u16(this.prop(o, 'brLeft'))), s16(u16(this.prop(o, 'brTop'))),
                                 s16(u16(this.prop(o, 'brRight'))), s16(u16(this.prop(o, 'brBottom'))));

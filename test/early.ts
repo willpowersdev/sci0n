@@ -330,6 +330,58 @@ console.log('\nwhat a property can hold');
     `${worst <= 32768 ? '' : ' -- WIDER THAN A WORD'}`);
 }
 
+console.log('\nthe scene the intro used to stop at');
+{
+  const g = new Game(nodeSource(dirOf('kq4sci', 'KQ4')));
+  const idx2 = new Index(g);
+  const s = new Session(g, idx2);
+  let clock = 0;
+  s.now = () => clock;
+  const vm = s.vm as unknown as { kernel(id: number, a: number[], f: unknown): number };
+  const onControl = idx2.kernel.indexOf('OnControl');
+
+  /**
+   * Genesta meets Rosella, and the intro used to stand there for ever.
+   *
+   * `findPosn` will not put an actor down until `onControl` answers
+   * something.  The map argument to that kernel is optional and the
+   * count is what says it is there: a rectangle is four numbers and a
+   * point is two, so an odd count means the first one chooses the map.
+   * Read as always present, `Act::onControl` -- which passes its base
+   * rectangle bare -- became a question about the point (top, right),
+   * a y of 277 on a screen 190 high, clamped away to nothing.  So no
+   * spot was ever good enough, the search widened as it failed, and
+   * the fairy was thrown out of the room.
+   */
+  let st = s.tick();
+  for (let i = 0; i < 20_000 && st.running && st.picture !== 25; i++) {
+    clock += 1000 / 60; st = s.tick();
+  }
+  check(st.picture === 25, `the scene is reached at ${(st.frames / 60).toFixed(0)}s`);
+
+  // This room has a control map worth reading; somewhere in the middle
+  // of it the two ways of asking have to agree, and not on nothing.
+  let bare = 0, mapped = 0, where = '';
+  for (const [x0, y0] of [[120, 100], [80, 120], [160, 140], [200, 90]] as const) {
+    bare = vm.kernel(onControl, [x0, y0, x0 + 20, y0 + 12], null);
+    mapped = vm.kernel(onControl, [4, x0, y0, x0 + 20, y0 + 12], null);
+    where = `${x0},${y0}`;
+    if (bare > 1) break;
+  }
+  check(bare === mapped && bare > 1,
+    `the rectangle at ${where} reads 0x${bare.toString(16)} bare and 0x${mapped.toString(16)} with the map named` +
+    `${bare === mapped && bare > 1 ? '' : ' -- THE COUNT IS BEING MISREAD'}`);
+
+  let at = -1;
+  for (let i = 0; i < 6000 && st.running; i++) {
+    clock += 1000 / 60; st = s.tick();
+    if (st.picture !== 25) { at = st.picture; break; }
+  }
+  check(at > 0, at > 0
+    ? `and the scene moves on to picture ${at} at ${(st.frames / 60).toFixed(0)}s`
+    : 'IT NEVER MOVES ON');
+}
+
 console.log('\nthe intro it plays');
 {
   const g = new Game(nodeSource(dirOf('kq4sci', 'KQ4')));
