@@ -187,6 +187,26 @@ export class Script {
       }
       p += size;
     }
+
+    /**
+     * Early SCI0 keeps no locals in the file, only a count.
+     *
+     * The word this script starts with -- the same one that makes
+     * `pickStart` answer 2 -- says how many local variables it has, and
+     * the interpreter allocates them zeroed.  The later games write a
+     * locals block instead, with the initial values in it.
+     *
+     * Read as having none, every one of KQ4's 155 scripts ran with no
+     * locals at all and the game with no globals, every access falling
+     * down the out-of-range path.  That path leaves an indexed store's
+     * index in the accumulator rather than the value it stored, and the
+     * intro's credits are built as `credits[n] = (View new:)` followed
+     * by sends to what that yielded -- so each credit was created, lost,
+     * and left at view 0, and the screen held the first one for the
+     * whole three minutes.
+     */
+    if (this.start === 2 && !this.locals.length && d.length >= 2)
+      this.locals = new Array(u16(d, 0)).fill(0);
   }
 
   classes() { return this.objects.filter(o => o.isClass); }
