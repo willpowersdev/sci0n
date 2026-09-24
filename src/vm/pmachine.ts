@@ -1496,11 +1496,27 @@ export class PMachine {
    * each pixel still tested against the picture's own priority, which is
    * what puts an actor behind scenery rather than in front of it.
    */
+  /**
+   * Where each stopped view was drawn, so it can be taken off again.
+   *
+   * Scenery is left out of the ordinary restore, so the only thing that
+   * removes it is the game saying to: the hidden bit.  The rectangle is
+   * given to the restore list at that point and cleared on the next
+   * cycle like anything else.
+   */
+  private scenery = new Map<RtObject, { x0: number; y0: number; x1: number; y1: number }>();
+
   private drawCast(castH: number) {
     this.showPendingPic();
+    for (const [o, r] of this.scenery) {
+      if (!(u16(this.prop(o, 'signal')) & 0x0008)) continue;   // still showing
+      this.screen.castCovered(r.x0, r.y0, r.x1, r.y1);
+      this.scenery.delete(o);
+    }
     this.screen.restoreCastAreas();
     const drawn: Array<{ o: RtObject; cel: Cel; left: number; top: number;
-                        pri: number; y: number; z: number; order: number }> = [];
+                        pri: number; y: number; z: number; order: number;
+                        scenery: boolean }> = [];
     let order = 0;
     for (const v of this.listValues(castH)) {
       const o = this.resolveTarget(null, v);
@@ -1522,25 +1538,27 @@ export class PMachine {
         this.setProp(o, 'priority', pri);
       } else if (pri < 0 || pri > 15) pri = this.priorityOf(r.bottom - 1);
       /**
-       * Arrived: it belongs to the picture now.
+       * A view that has stopped moving is scenery.
        *
-       * Drawing it again each cycle costs one blit and saves keeping a
-       * record of what has been baked; a view that has stopped moving
-       * lands in the same place every time.
+       * It is still drawn, but its rectangle is not handed to the
+       * ordinary restore, so it survives the game dropping it from the
+       * cast.  KQ4's title needs that: the three pieces of its "IV" fly
+       * in, stop, and are dropped, and with their rectangles on the
+       * restore list the next cycle took them away -- which is what the
+       * opening question's window did on its way out, nine seconds
+       * later, the numerals having sat there in the meantime only
+       * because a modal dialog runs no cycles.
        *
-       * SCI also rewrites the bit to `SIGNAL_NO_UPDATE` here, and that
-       * part is deliberately left undone: a member carrying that bit is
-       * one the ego walks through, and Camelot's `armourStand` and
-       * `pouch` both stop updating the moment the room settles.  Making
-       * the swap lets the ego walk through the furniture -- which this
-       * project has evidence against, in the comment on `blockedByCast`
-       * and in the check that reads it.  The visible half of the rule
-       * is what the games depend on; the bit is bookkeeping, and this
-       * one is wrong for them.
+       * What takes scenery off again is the game hiding it, which is
+       * handled above.  The credits in the same intro are the case that
+       * needs it: each one stops, is hidden, and is dropped, and
+       * without the hiding half they pile up on one another.
        */
-      if (u16(this.prop(o, 'signal')) & SIGNAL_STOP_UPDATE)
-        this.screen.addToPic(cel, r.left, r.top, pri);
-      drawn.push({ o, cel, left: r.left, top: r.top, pri,
+      const scenery = (u16(this.prop(o, 'signal')) & SIGNAL_STOP_UPDATE) !== 0;
+      if (scenery)
+        this.scenery.set(o, { x0: r.left, y0: r.top,
+                              x1: r.left + cel.width, y1: r.top + cel.height });
+      drawn.push({ o, cel, left: r.left, top: r.top, pri, scenery,
                    y: s16(u16(this.prop(o, 'y'))), z: s16(u16(this.prop(o, 'z'))),
                    order: order++ });
     }
@@ -1560,8 +1578,10 @@ export class PMachine {
     // member drawn later cannot paint over one that is nearer the front.
     for (const d of drawn) {
       this.screen.drawCel(d.cel, d.left, d.top, d.pri, true, true);
-      // Remembered so the picture can be put back under it next cycle.
-      this.screen.castCovered(d.left, d.top, d.left + d.cel.width, d.top + d.cel.height);
+      // Remembered so the picture can be put back under it next cycle --
+      // except for scenery, which is meant to stay where it was put.
+      if (!d.scenery)
+        this.screen.castCovered(d.left, d.top, d.left + d.cel.width, d.top + d.cel.height);
     }
     this.animateStats.drawn += drawn.length;
   }

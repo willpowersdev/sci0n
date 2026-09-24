@@ -247,6 +247,45 @@ console.log('\nthe numerals on the title screen');
       `${n > bare + 2000 ? '' : ' -- THE NUMERALS HAVE GONE'}`);
 }
 
+console.log('\nthe credits that follow it');
+{
+  const g = new Game(nodeSource(dirOf('kq4sci', 'KQ4')));
+  const s = new Session(g, new Index(g));
+  let clock = 0;
+  s.now = () => clock;
+
+  /**
+   * One credit at a time, in the space between the two heralds.
+   *
+   * Each credit stops moving, is hidden, and is dropped from the cast,
+   * and a view that has stopped is scenery -- left alone by the restore
+   * that clears moving actors.  Left alone by the hiding as well, they
+   * pile up: "Executive Producer" is still there under "Directed by".
+   *
+   * The tell is the ink never coming down.  Counted rather than
+   * compared against the picture, because the picture behind the
+   * credits is black and any text at all would pass that.
+   */
+  let st = s.tick();
+  const ink: number[] = [];
+  for (let i = 0; i < 4200 && st.running; i++) {
+    clock += 1000 / 60;
+    st = s.tick();
+    if (st.picture !== 698 || i % 180 !== 0) continue;
+    let n = 0;
+    for (let y = 60; y < 170; y++)
+      for (let x = 100; x < 230; x++) if (s.screen.visual[y * WIDTH + x] !== 0) n++;
+    ink.push(n);
+  }
+  check(ink.length >= 6, `the credits run for ${ink.length} samples`);
+  const fell = ink.some((n, i) => i > 0 && n < ink[i - 1] - 100);
+  check(fell, `a credit is cleared before the next arrives${fell ? '' : ' -- THEY ARE PILING UP'}`);
+  // Two credits of three lines are about 2,400 pixels; the whole run
+  // left on screen at once came to nearly 6,000.
+  check(Math.max(...ink) < 3500,
+    `the most on screen at once is ${Math.max(...ink)} pixels`);
+}
+
 console.log('\nthe intro it plays');
 {
   const g = new Game(nodeSource(dirOf('kq4sci', 'KQ4')));
