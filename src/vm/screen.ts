@@ -105,24 +105,49 @@ export class Screen {
    */
   private mask = new Uint8Array(WIDTH * HEIGHT);
   private maskStale = true;
+  /** A window is standing here. */
+  private static readonly BY_WINDOW = 1;
+  /** Text was written straight onto the picture here. */
+  private static readonly BY_OVERLAY = 2;
 
   /** Say the protected regions have changed. */
   protectionChanged() { this.maskStale = true; }
 
+  /**
+   * Windows and written text are kept apart, because they are not owed
+   * the same protection.
+   *
+   * A window is a thing standing in front of the picture and nothing
+   * may paint over it while it is open.  Text written by `Display` is
+   * not: it is paint on the picture, and SCI lets the cast rub it out
+   * -- restoring the background under where a sprite was erases
+   * whatever had been written there.  Camelot's purse depends on it.
+   * The coin counts are written over the panel, the panel is a view,
+   * and closing the purse disposes the view; the counts go because
+   * they are inside the rectangle that gets the picture put back.
+   * Guarding them from that left three numbers hanging over the room.
+   */
   private rebuildMask() {
     this.maskStale = false;
     this.mask.fill(0);
-    for (const list of [this.windows, this.overlays])
+    for (const [list, bit] of [[this.windows, Screen.BY_WINDOW],
+                               [this.overlays, Screen.BY_OVERLAY]] as const)
       for (const w of list)
         for (let y = Math.max(0, w.y0); y < Math.min(HEIGHT, w.y1); y++) {
           const row = y * WIDTH;
-          for (let x = Math.max(0, w.x0); x < Math.min(WIDTH, w.x1); x++) this.mask[row + x] = 1;
+          for (let x = Math.max(0, w.x0); x < Math.min(WIDTH, w.x1); x++) this.mask[row + x] |= bit;
         }
   }
 
   private covered(x: number, y: number): boolean {
     if (this.maskStale) this.rebuildMask();
-    return this.mask[y * WIDTH + x] === 1;
+    return this.mask[y * WIDTH + x] !== 0;
+  }
+
+  /** Only a window, which is the protection a cast restore must respect. */
+  private behindWindow(x: number, y: number): boolean {
+    if (this.maskStale) this.rebuildMask();
+    return (this.mask[y * WIDTH + x] & Screen.BY_WINDOW) !== 0;
   }
 
   /** True when nothing is protected, so the fast paths can be taken. */
@@ -251,12 +276,12 @@ export class Screen {
   restoreCastAreas() {
     this.epoch++;
     this.priority.set(this.bgPriority);
-    const guarded = !this.nothingProtected;
+    const guarded = this.windows.length > 0;
     for (const r of this.lastDrawn) {
       for (let y = Math.max(0, r.y0); y < Math.min(HEIGHT, r.y1); y++) {
         const row = y * WIDTH;
         for (let x = Math.max(0, r.x0); x < Math.min(WIDTH, r.x1); x++) {
-          if (guarded && this.covered(x, y)) continue;
+          if (guarded && this.behindWindow(x, y)) continue;
           this.visual[row + x] = this.bgVisual[row + x];
         }
       }
@@ -325,8 +350,10 @@ export class Screen {
         if (v === cel.key) continue;
         const i = py * WIDTH + px;
         if (priority < pri[i]) continue;
-        // A sprite is behind an open window, never over it.
-        if (clip && !this.nothingProtected && this.covered(px, py)) continue;
+        // A sprite is behind an open window, never over it.  Written
+        // text is a different matter: it is paint on the picture, and
+        // a sprite drawn afterwards covers it, as it does in SCI.
+        if (clip && this.windows.length && this.behindWindow(px, py)) continue;
         // A cel index is one colour; the pair byte keeps the renderer's
         // two paths identical for pictures and for sprites.
         vis[i] = v < 16 ? ((v << 4) | v) : v;
