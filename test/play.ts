@@ -20,7 +20,7 @@
  * clock: left on real time it would sit waiting for ever and the suite
  * would report it running while it did nothing.
  */
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Game, type ResourceSource } from '../src/resources.ts';
 import { Session } from '../src/vm/session.ts';
@@ -31,10 +31,26 @@ function nodeSource(dir: string): ResourceSource {
   return { names: () => files, read: (n) => new Uint8Array(readFileSync(join(dir, n))) };
 }
 
-const GAMES = ['SQ3', 'LSL2', 'KQ4', 'CAMELOT', 'COLONEL', 'ICE', 'HERO', 'QFG2'];
+/**
+ * The shipped copy is preferred over the full collection.
+ *
+ * `games/` holds what a deployed page serves: the same eight games, but
+ * under ScummVM's names and cut down to RESOURCE.MAP and its volumes.
+ * Testing the untrimmed originals would leave the trim itself untested,
+ * and it is the trim that can go wrong -- a volume left behind reads as
+ * a game that boots and then cannot find a room.  Where there is no such
+ * folder the originals stand in, so a checkout without one still runs.
+ */
+const TRIMMED = join(import.meta.dirname, '..', 'games');
+const shipped = existsSync(join(TRIMMED, 'games.json'));
+const root = shipped ? TRIMMED : ROOT;
+const GAMES: string[] = shipped
+  ? Object.keys(JSON.parse(readFileSync(join(TRIMMED, 'games.json'), 'utf8')))
+  : ['SQ3', 'LSL2', 'KQ4', 'CAMELOT', 'COLONEL', 'ICE', 'HERO', 'QFG2'];
+console.log(`reading ${shipped ? 'the shipped games/' : ROOT}\n`);
 let playable = 0;
 for (const name of GAMES) {
-  const g = new Game(nodeSource(join(ROOT, name)));
+  const g = new Game(nodeSource(join(root, name)));
   const s = new Session(g);
   if (!s.ready) { console.log(`${name.padEnd(9)} no entry point`); continue; }
   s.budget = 60_000;

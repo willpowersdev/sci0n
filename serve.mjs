@@ -1,15 +1,24 @@
 import { createServer } from 'node:http';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
-import { homedir } from 'node:os';
 const TYPES = { '.html':'text/html', '.js':'text/javascript', '.json':'application/json', '.css':'text/css' };
 const root = process.cwd();
 /**
  * Games are served read-only from their own directory so the page can be
- * opened straight at one (`/?game=QFG2`) instead of going through the
+ * opened straight at one (`/?game=qfg2`) instead of going through the
  * directory picker, which needs a click and a native dialog.
+ *
+ * `games/` beside the page by default, which is where a deployed copy
+ * keeps them: the same folder, at the same place, so what is developed
+ * against is what is uploaded.  It used to default to the whole Sierra
+ * collection somewhere else entirely, which meant the list here and the
+ * list on the web were different lists -- fifteen against eight, under
+ * different names, and half of them games this interpreter cannot read.
+ *
+ * `SCI_GAMES` still points it anywhere else, which is what the tests
+ * use to reach an untrimmed copy.
  */
-const GAMES = process.env.SCI_GAMES ?? join(homedir(), 'DOSGames', 'SIERRA');
+const GAMES = process.env.SCI_GAMES ?? join(root, 'games');
 createServer(async (req, res) => {
   const url = (req.url ?? '/').split('?')[0];
   let path, base;

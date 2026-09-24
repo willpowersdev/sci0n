@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# The games themselves are Sierra's and are not ours to carry.
+games/
 serve.log
 *.wav
 .DS_Store
