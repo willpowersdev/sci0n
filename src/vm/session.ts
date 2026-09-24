@@ -118,9 +118,16 @@ export class Session {
     this.vm.events.push({ type: EV.keyboard, message: code, modifiers,
                           x: this.vm.mouseX, y: this.vm.mouseY });
   }
-  mouse(type: number, x: number, y: number) {
+  /**
+   * A press or a release, and which button it was.
+   *
+   * SCI has no bit for the second button: the mouse interrupt handler
+   * reported a right press as an ordinary press with shift held, so
+   * that is what the caller passes for one.
+   */
+  mouse(type: number, x: number, y: number, modifiers = 0) {
     this.vm.mouseX = x; this.vm.mouseY = y;
-    this.vm.events.push({ type, message: 0, modifiers: 0, x, y });
+    this.vm.events.push({ type, message: 0, modifiers, x, y });
   }
   /**
    * Where the pointer is.

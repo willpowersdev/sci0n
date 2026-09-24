@@ -23,7 +23,7 @@ import { encodeGIF, type Frame } from './gif.ts';
 import { encodeWAV } from './wav.ts';
 import { Session, SCREEN_HEIGHT } from './vm/session.ts';
 import { STATUS_HEIGHT } from './vm/screen.ts';
-import { EV } from './vm/pmachine.ts';
+import { EV, MOD } from './vm/pmachine.ts';
 import { Scene } from './scene.ts';
 import { picHistogram, unditherCel } from './undither.ts';
 import { CrtDisplay } from './crt.ts';
@@ -327,7 +327,8 @@ function onPlayKey(e: KeyboardEvent) {
   const m = keyMessage(e);
   if (m === null) return;
   e.preventDefault();
-  session.key(m, (e.shiftKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.altKey ? 4 : 0));
+  session.key(m, (e.shiftKey ? MOD.shift : 0) | (e.ctrlKey ? MOD.ctrl : 0)
+                 | (e.altKey ? MOD.alt : 0));
 }
 
 /**
@@ -1444,6 +1445,14 @@ cv.addEventListener('mousemove', (e) => {
  * release, so sending only the press left Camelot's opening menu
  * following the mouse without ever accepting a choice.
  */
+/**
+ * The second button belongs to the game, not to the browser.
+ *
+ * Without this the menu comes up over the picture and the game never
+ * sees the click at all.
+ */
+cv.addEventListener('contextmenu', (e) => { if (session) e.preventDefault(); });
+
 for (const [name, type] of [['mousedown', EV.mouseDown], ['mouseup', EV.mouseUp]] as const) {
   cv.addEventListener(name, (e) => {
     if (!session) return;
@@ -1455,7 +1464,10 @@ for (const [name, type] of [['mousedown', EV.mouseDown], ['mouseup', EV.mouseUp]
     // A negative y is the strip above the picture, where the menu
     // titles live; clamping it to zero would put every click on the
     // menu bar into the top row of the picture instead.
-    session.mouse(type, Math.max(0, Math.min(319, x)), Math.max(-STATUS_HEIGHT, Math.min(189, y)));
+    // SCI knows the second button only as a press with shift held.
+    const mods = (e as MouseEvent).button === 2 ? MOD.right : 0;
+    session.mouse(type, Math.max(0, Math.min(319, x)),
+                  Math.max(-STATUS_HEIGHT, Math.min(189, y)), mods);
   });
 }
 

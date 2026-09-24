@@ -145,6 +145,27 @@ export const EV = {
 } as const;
 
 /**
+ * The modifier bits an event carries, as the games read them.
+ *
+ * Shift is two bits because the keyboard had two shift keys and the
+ * interrupt handler reported which; a script asking "is shift held"
+ * tests both.  These are not the browser's numbering and were not the
+ * numbering here either -- control and alt were one bit too low, so a
+ * script testing for control saw left shift.
+ *
+ * `right` is the mouse's second button.  SCI has no separate bit for
+ * it: the mouse interrupt handler reported a right press as an
+ * ordinary press with shift held, and the games' handlers read it that
+ * way, so that is what a right click has to look like here.
+ */
+export const MOD = {
+  rightShift: 0x01, leftShift: 0x02, shift: 0x03,
+  ctrl: 0x04, alt: 0x08,
+  /** The second mouse button, which arrives as a shifted press. */
+  right: 0x03,
+} as const;
+
+/**
  * Direction keys, as the numeric keypad's scan codes.
  *
  * Directions run clockwise from north, 1 to 8, with 0 for the centre
