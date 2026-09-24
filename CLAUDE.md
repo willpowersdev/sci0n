@@ -59,6 +59,40 @@ so in the test and choose a different one.
 Do not pick a threshold that makes a test pass. Go and measure what the
 right number is.
 
+## When stuck, go and read ScummVM
+
+After two failed guesses, stop guessing. ScummVM's SCI engine is the
+reference implementation and it has the answer; imitate what it does.
+Reaching for it early is cheaper than another afternoon of theories.
+
+Fetch the file and ask for **behavioural facts, not code**: which
+selectors a kernel reads and writes, the exact conditions and the order
+of operations, what it returns, where the versions differ. Then write
+it here from those facts, in this project's own shape. ScummVM is
+GPLv2+ and this is MIT, so nothing is copied and the commit says which
+way round it was done. Useful files:
+
+    engines/sci/engine/kmovement.cpp    InitBresen, DoBresen
+    engines/sci/engine/kgraphics.cpp    OnControl, CanBeHere, windows
+    engines/sci/graphics/compare.cpp    what those two actually compute
+    engines/sci/sound/                  the drivers and the cue protocol
+
+Every hard bug here has ended this way, and each time the guessing
+beforehand was wasted: that a sound cue is a program change on channel
+15, that `InitBresen` keeps a line on the mover rather than aiming
+afresh each cycle, that `OnControl`'s screen argument is optional and
+the count is what says it is there.
+
+**The games are the other authority**, and they are on disk. Disassemble
+the script that is misbehaving and read what it expects of the
+interpreter -- it is stating the contract. `Motion::doit` calls
+`moveDone` only when the client's x and y exactly equal the mover's,
+which is why a walk has to land on the pixel. `Act::onControl` passes
+its base rectangle with no screen in front of it, which is what exposed
+the argument rule. `RoomActions` waits on a music cue, which is why the
+intro stands still. Ten minutes with the disassembler beats an hour of
+reasoning about what a script probably does.
+
 ## Claims
 
 Never report something as fixed without having seen it work. If a fix could
