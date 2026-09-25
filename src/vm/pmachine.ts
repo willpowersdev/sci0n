@@ -1546,10 +1546,21 @@ export class PMachine {
    *
    * Scenery is left out of the ordinary restore, which is what keeps it
    * when the game drops it from the cast.  Two things put the picture
-   * back: the game hiding it, which is how the credits make way for one
-   * another, and the view moving after all -- a script may set the bit
-   * and then go on changing the thing, and KQ4's intro does, which left
-   * Graham's hat hanging in the air behind itself as he flung it.
+   * back.  The game hiding it, which is how the credits make way for
+   * one another -- 35 times in KQ4's intro, 21 of them the credit
+   * views 898 and 899.  And the view moving after all, a script having
+   * set the bit and then gone on changing the thing, which that intro
+   * does 117 times across six views, 109 of them view 755.
+   *
+   * The moving half used to be credited here with Graham's hat, which
+   * was reported flying and standing still at once.  It should not be.
+   * The hat does come through this branch, twice, but taking the
+   * branch out leaves the hat just as single as before: the scene cuts
+   * to the vignette on the cycle it moves, and the new picture covers
+   * the evidence either way.  What the removal does leave standing is
+   * a piece of view 761, 64 pixels at 207,112, in the throne room for
+   * the rest of the scene.  That is what the branch is for.  What
+   * cured the hat is still unaccounted for.
    */
   private scenery = new Map<RtObject, {
     rect: { x0: number; y0: number; x1: number; y1: number };
