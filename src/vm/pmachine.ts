@@ -178,7 +178,10 @@ export const SIGNAL_NO_BLOCK = 0x4000 | 0x0080 | 0x0004;
 
 export const EV = {
   null: 0x0000, mouseDown: 0x0001, mouseUp: 0x0002,
-  keyboard: 0x0004, joystick: 0x0008, direction: 0x0040,
+  // Bit 3 is a key coming back up, not the joystick, which is what it
+  // was called here.  SCI1.1 is the first to ask for one, so nothing
+  // sends them: an event no game reads would sit in the queue for ever.
+  keyboard: 0x0004, keyUp: 0x0008, direction: 0x0040,
   said: 0x0080, peek: 0x8000,
 } as const;
 

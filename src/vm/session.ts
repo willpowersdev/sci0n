@@ -157,6 +157,14 @@ export class Session {
   get ready() { return this.entry !== null; }
   get screen() { return this.vm.screen; }
 
+  /**
+   * A key.
+   *
+   * Repeats are not told apart from presses, which is what ScummVM
+   * does: its backend marks a repeat with `kbdRepeat` and the SCI
+   * engine never looks at it.  A held key therefore queues at whatever
+   * rate the keyboard repeats, and `GetEvent` spends one a cycle.
+   */
   key(code: number, modifiers = 0) {
     this.vm.events.push({ type: EV.keyboard, message: code, modifiers,
                           x: this.vm.mouseX, y: this.vm.mouseY });
