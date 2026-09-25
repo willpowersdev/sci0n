@@ -11,6 +11,14 @@ import { Index } from '../script.ts';
 import { PMachine, EV } from './pmachine.ts';
 import { WIDTH, SCREEN_HEIGHT } from './screen.ts';
 
+/**
+ * What `GameIsRestarting` answers with after a restart.
+ *
+ * SCI distinguishes a restart from a restore, and the scripts only
+ * test it for truth, but the number is the one the interpreter uses.
+ */
+const RESTARTING = 2;
+
 export { WIDTH, SCREEN_HEIGHT };
 
 export interface SessionStatus {
@@ -23,7 +31,7 @@ export interface SessionStatus {
 }
 
 export class Session {
-  vm: PMachine;
+  vm!: PMachine;
   index: Index;
   /** Instructions per displayed frame; enough for a game cycle, bounded
    *  so one runaway loop cannot freeze the page. */
@@ -95,9 +103,18 @@ export class Session {
   private started = false;
   private done: { stopped: string; detail?: string } | null = null;
 
+  private game: Game;
+
   constructor(game: Game, index?: Index) {
+    this.game = game;
     this.index = index ?? new Index(game);
-    this.vm = new PMachine(game, this.index);
+    this.begin();
+  }
+
+  /** Build the machine and find `play`, which is also what a restart does. */
+  private begin() {
+    this.vm = new PMachine(this.game, this.index);
+    this.entry = null;
     const obj = this.vm.resolveTarget(null, this.vm.scriptID(0, 0));
     if (!obj) return;
     // Export 0 of script 0 is the game object; `play` is its entry point.
@@ -109,6 +126,32 @@ export class Session {
       this.entry = { script: f.script, pc: f.offset, obj: this.vm.instantiate(0, obj.def) };
       break;
     }
+  }
+
+  /**
+   * Start the game again from script 0, with the flag that says so.
+   *
+   * A restart in SCI throws the scripts, the clones and the globals
+   * away and runs `play` afresh; what it does not throw away is the
+   * machinery outside the game, so the picture settings and the chosen
+   * output are carried across rather than snapping back to the
+   * defaults under the player.  KQ4 reaches its first playable room
+   * only this way -- the intro ends by asking for a restart, and
+   * `KQ4::init` sends the player to the beach when `GameIsRestarting`
+   * says yes.
+   */
+  private restart() {
+    this.vm.sounds.stopAll();
+    const { undither, statusVisible } = this.vm.screen;
+    const output = this.vm.sounds.output;
+    this.begin();
+    this.vm.restarting = RESTARTING;
+    this.vm.screen.undither = undither;
+    this.vm.screen.statusVisible = statusVisible;
+    this.vm.sounds.output = output;
+    this.started = false;
+    this.started_at = 0;
+    this.ticksIssued = 0;
   }
 
   get ready() { return this.entry !== null; }
@@ -160,6 +203,13 @@ export class Session {
       ? this.vm.run(0, null, 0, { steps: this.budget, resume: true, keep: true, deadline: Date.now() + 120 })
       : this.vm.run(this.entry.script, this.entry.obj, this.entry.pc,
                     { steps: this.budget, keep: true, deadline: Date.now() + 120 });
+    // A restart is not the end of the game: the machine is thrown away
+    // and built again, and the next tick runs `play` on the new one.
+    if (r.stopped === 'restart') {
+      this.restart();
+      return { running: true, instructions: this.instructions, frames: this.frames,
+               picture: this.vm.currentPic };
+    }
     this.started = true;
     this.vm.pumpSounds();
     this.instructions += r.steps;

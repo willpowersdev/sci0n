@@ -254,7 +254,7 @@ interface Frame {
 
 export interface RunResult {
   steps: number;
-  stopped: 'ret' | 'step-limit' | 'timeout' | 'invalid-opcode' | 'unimplemented' | 'error';
+  stopped: 'ret' | 'step-limit' | 'timeout' | 'invalid-opcode' | 'unimplemented' | 'error' | 'restart';
   detail?: string;
   kernelCalls: Map<number, number>;
   unresolvedSends: number;
@@ -502,6 +502,9 @@ export class PMachine {
       if ((res.steps & 0x0F) === 0 && Date.now() > deadline) {
         res.stopped = 'timeout'; break;
       }
+      // `RestartGame` has been called: give up this cycle wherever it
+      // is, frames and all, and let the session build the game again.
+      if (this.restartRequested) { res.stopped = 'restart'; break; }
       const f = this.frames[this.frames.length - 1];
       res.maxDepth = Math.max(res.maxDepth, this.frames.length - base);
       res.maxStack = Math.max(res.maxStack, this.stack.length);
@@ -1390,6 +1393,10 @@ export class PMachine {
   private clones = new Map<number, RtObject>();
   /** Clones disposed during this cycle, swept at the start of the next. */
   private disposed = new Set<number>();
+  /** What `GameIsRestarting` reports: 0 for no, 2 for a restart. */
+  restarting = 0;
+  /** Set by `RestartGame`, read by `run` so it gives up the cycle. */
+  restartRequested = false;
   /**
    * Lists and nodes are kernel-owned structures a script only ever holds
    * a handle to, so they live here rather than in script memory.  Handles
@@ -2170,7 +2177,39 @@ export class PMachine {
         }
         return 1;
       }
-      case 'GameIsRestarting': return 0;
+      /**
+       * The two halves of a restart, which KQ4 needs to start at all.
+       *
+       * Its intro is the attract loop: title, credits, Graham's collapse,
+       * Rosella on Tamir with Genesta -- and then `RoomActions` state 32
+       * calls `Game::restart`, which is `RestartGame`.  `KQ4::init` opens
+       * by asking `GameIsRestarting`, and goes to room 25, the beach you
+       * actually play, when the answer is yes; when it is no it goes to
+       * the copy-protection room and the whole intro again.  So the only
+       * way into the game is round this loop, and with `RestartGame`
+       * doing nothing the intro ran to its end and stopped there with no
+       * ego in the cast and `User.canInput` still false.  The player was
+       * left looking at the beach unable to move.
+       *
+       * `GameIsRestarting` answers with the flag as it was, and a call
+       * passing zero clears it -- which is what script 994 does once a
+       * cycle, so the answer is yes only for the first read after the
+       * restart.  That ordering is the whole mechanism: `play` runs
+       * `init` before the cycle that clears it.
+       */
+      case 'GameIsRestarting': {
+        const was = this.restarting;
+        if (args.length && a0 === 0) this.restarting = 0;
+        return was;
+      }
+      case 'RestartGame': {
+        // The real interpreter shrinks the stack to its base and tells
+        // the machine to give up as soon as it can; `run` sees this at
+        // the top of the next step and stops, and the session builds
+        // the game again from script 0.
+        this.restartRequested = true;
+        return 0;
+      }
       case 'Joystick': return 0;
 
       // --- text and windows ---------------------------------------------
