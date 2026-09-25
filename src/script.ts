@@ -86,6 +86,11 @@ export class SciObject {
                          u16(d, mt + 2 + (count + 1 + i) * 2)]);
   }
 
+  /** Does property `i` hold a pointer into the script rather than a number? */
+  isPointer(i: number): boolean {
+    return this.script.relocations.has(this.offset + 12 + i * 2);
+  }
+
   /** Resolve property names, borrowing from the species class if needed. */
   propertyNames(index: Index | null): string[] {
     let sels = this.propSelectors;
@@ -103,10 +108,27 @@ export class SciObject {
 export class Script {
   data: Uint8Array; number: number | null;
   start = 0;
+  /**
+   * Offsets of words in this script that hold a pointer into it.
+   *
+   * SCI's loader walks this list and turns each one into a real
+   * address; here they are turned into script-tagged references, which
+   * is what this port uses for the same thing.  Leaving them as the
+   * bare offsets the file carries is not harmless, because the scripts
+   * tell a pointer from a resource number by its size: script 255's
+   * `Print` takes anything under 1000 to be a text module.  KQ4's
+   * `User` holds a pointer to "Enter input" at offset 618, so the
+   * parser's prompt was fetched as text module 618, which does not
+   * exist, and the input line came up eight pixels wide with no field
+   * to type into.
+   */
+  relocations = new Set<number>();
   blocks: Array<[string, number, number]> = [];
   objects: SciObject[] = [];
   exports: number[] = [];
   locals: number[] = [];
+  /** Where the locals block's words start, for the relocation list. */
+  localsAt = -1;
   strings = new Map<number, string>();
   said: Array<[number, Uint8Array]> = [];
   synonyms: Array<[number, number]> = [];
@@ -160,8 +182,15 @@ export class Script {
         const n = u16(body, 0);
         this.exports = [];
         for (let i = 0; i < n; i++) this.exports.push(u16(body, 2 + i * 2));
+      } else if (btype === 8) {
+        // A count, then that many offsets.  Some scripts carry a count
+        // one larger than the entries that follow, so the block's own
+        // size has the last word.
+        const n = Math.min(u16(body, 0), Math.floor((body.length - 2) / 2));
+        for (let i = 0; i < n; i++) this.relocations.add(u16(body, 2 + i * 2));
       } else if (btype === 10) {
         this.locals = [];
+        this.localsAt = p + 4;
         for (let i = 0; i < Math.floor(body.length / 2); i++) this.locals.push(u16(body, i * 2));
       } else if (btype === 4) {
         // Specs are separated by 0xFF, but the block cannot be scanned

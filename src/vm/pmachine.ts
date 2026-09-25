@@ -66,6 +66,29 @@ const REF_TAG = 0x40000000;
 export const makeRef = (script: number, offset: number) =>
   REF_TAG | ((script & 0x3FFF) << 16) | (offset & 0xFFFF);
 export const isRef = (v: number) => (v & REF_TAG) !== 0;
+/**
+ * Ordering for the unsigned comparisons, where one side may be a pointer.
+ *
+ * Sierra's own hack, and the scripts are written around it: a number
+ * below a certain bound is a number, and anything else is a pointer, so
+ * a pointer compared against a small number is the greater of the two.
+ * ScummVM puts the bound at 2000 for SCI0 to SCI1.1 and that is the
+ * number used here.  Two pointers are ordered by their offsets, which
+ * is what comparing within one script means.
+ *
+ * Making a pointer simply large instead -- big enough to beat anything
+ * -- is not the same rule and does not work: SQ3 compares pointers
+ * against values well above the bound, and with that version it never
+ * got past its title screen.
+ */
+const ucmp = (a: number, b: number): number => {
+  if (isRef(a) !== isRef(b)) {
+    const n = (isRef(a) ? b : a) & 0xFFFF;
+    if (n <= 2000) return isRef(a) ? 1 : -1;
+  }
+  const x = a & 0xFFFF, y = b & 0xFFFF;
+  return x < y ? -1 : x > y ? 1 : 0;
+};
 const refScript = (v: number) => (v >> 16) & 0x3FFF;
 const refOffset = (v: number) => v & 0xFFFF;
 
@@ -213,7 +236,11 @@ export class RtObject {
   propSelectors: number[];
   constructor(def: SciObject, scriptNo: number, propSelectors: number[]) {
     this.def = def; this.scriptNo = scriptNo;
-    this.props = Int32Array.from(def.properties.map(s16));
+    // A property the script's relocation list names holds a pointer
+    // into that script, and has to arrive as a reference rather than
+    // as the bare offset -- the games tell the two apart by size.
+    this.props = Int32Array.from(def.properties.map(
+      (v, i) => (v && def.isPointer(i)) ? makeRef(scriptNo, v) : s16(v)));
     this.propSelectors = propSelectors;
   }
   /**
@@ -384,7 +411,11 @@ export class PMachine {
       const s = this.index.script(n);
       if (!s) return null;
       this.scripts.set(n, s);
-      this.locals.set(n, Int32Array.from(s.locals.map(s16)));
+      // Locals get the same relocation treatment as properties: a word
+      // the script names as a pointer is a reference, not a number.
+      this.locals.set(n, Int32Array.from(s.locals.map((v, i) =>
+        (v && s.localsAt >= 0 && s.relocations.has(s.localsAt + i * 2))
+          ? makeRef(n, v) : s16(v))));
     }
     return this.scripts.get(n) ?? null;
   }
@@ -641,10 +672,22 @@ export class PMachine {
           case 'ge?': this.prev = this.acc; this.acc = (st.pop() ?? 0) >= this.acc ? 1 : 0; break;
           case 'lt?': this.prev = this.acc; this.acc = (st.pop() ?? 0) < this.acc ? 1 : 0; break;
           case 'le?': this.prev = this.acc; this.acc = (st.pop() ?? 0) <= this.acc ? 1 : 0; break;
-          case 'ugt?': this.prev = this.acc; this.acc = u16(st.pop() ?? 0) > u16(this.acc) ? 1 : 0; break;
-          case 'uge?': this.prev = this.acc; this.acc = u16(st.pop() ?? 0) >= u16(this.acc) ? 1 : 0; break;
-          case 'ult?': this.prev = this.acc; this.acc = u16(st.pop() ?? 0) < u16(this.acc) ? 1 : 0; break;
-          case 'ule?': this.prev = this.acc; this.acc = u16(st.pop() ?? 0) <= u16(this.acc) ? 1 : 0; break;
+          /**
+           * Unsigned comparison, where a pointer is a large address.
+           *
+           * This is how the scripts tell a pointer from a small number,
+           * and they do it on purpose: script 255's `Print` treats
+           * anything under 1000 as a text module and everything else as
+           * a string to copy.  Truncating a reference to sixteen bits
+           * throws the tag away and leaves the offset, so KQ4's pointer
+           * to "Enter input" at offset 618 read as module 618 and the
+           * parser came up as an empty box with nothing to type into.
+           * `ucmp` has the rule.
+           */
+          case 'ugt?': this.prev = this.acc; this.acc = ucmp(st.pop() ?? 0, this.acc) > 0 ? 1 : 0; break;
+          case 'uge?': this.prev = this.acc; this.acc = ucmp(st.pop() ?? 0, this.acc) >= 0 ? 1 : 0; break;
+          case 'ult?': this.prev = this.acc; this.acc = ucmp(st.pop() ?? 0, this.acc) < 0 ? 1 : 0; break;
+          case 'ule?': this.prev = this.acc; this.acc = ucmp(st.pop() ?? 0, this.acc) <= 0 ? 1 : 0; break;
           case 'bt': if (this.acc) f.pc = next + a[0]; break;
           case 'bnt': if (!this.acc) f.pc = next + a[0]; break;
           case 'jmp': f.pc = next + a[0]; break;
