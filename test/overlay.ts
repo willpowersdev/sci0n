@@ -99,6 +99,33 @@ const overPicture = (x0: number, y0: number, x1: number, y1: number) => {
     `the cast put the picture back over it (${wrote} pixels down to ${left})`);
 }
 
+// --- a line replaces the line it lands on, and only that one ------------
+{
+  /**
+   * Narration is written a line at a time in the same place, and the
+   * line before has to go or the two print on top of each other.  What
+   * must not go is a line somewhere else: Hero's Quest writes its whole
+   * character sheet this way, one skill at a time, and clearing every
+   * older line left the last one alone on a blank page.
+   */
+  const ax = 20, ay = 120, bx = 20, by = 140;
+  vm.kernel(display, [vm.makeString('MMMMMMMM'), 100, ax, ay]);
+  const first = overPicture(ax, ay, ax + W, ay + H);
+  check(first > 0, `the first line was written at ${ax},${ay} (${first} pixels)`);
+
+  screen.restoreCastAreas();            // a cycle passes, so the line is now old
+  vm.kernel(display, [vm.makeString('MMMMMMMM'), 100, bx, by]);
+  const elsewhere = overPicture(ax, ay, ax + W, ay + H);
+  check(elsewhere === first,
+    `a line written elsewhere left it alone (${first} pixels, ${elsewhere} after)`);
+
+  screen.restoreCastAreas();
+  vm.kernel(display, [vm.makeString('MM'), 100, ax, ay]);
+  const over = overPicture(ax + 20, ay, ax + W, ay + H);
+  check(over === 0,
+    `a shorter line in its place took the tail of it away (${over} pixels left)`);
+}
+
 // --- a window is not ----------------------------------------------------
 {
   const top = 40, left = 40, bottom = 80, right = 200;

@@ -74,17 +74,30 @@ export class Screen {
   epoch = 0;
 
   /**
-   * Put the picture back under text written in an earlier cycle.
+   * Put the picture back under text the new text is about to land on.
    *
-   * Called before new text is written, so each line replaces the last
-   * rather than printing on top of it.
+   * Called before each line is written, so a line replaces the one
+   * written where it is going rather than printing on top of it.
+   *
+   * Only what it lands on.  Clearing every older line instead made the
+   * last `Display` call the only one that survived, and Hero's Quest
+   * builds its character sheet out of thirty-six of them -- every skill
+   * name and every number vanished the moment the next one was written,
+   * leaving the player a blank page with two buttons on it.  SCI erases
+   * none of this: text is paint on the picture, and what rubs it out is
+   * a sprite passing over it or a new room.  Replacing a line in place
+   * is the one case the scripts do rely on, and overlapping is what
+   * says that is what is happening.
    */
-  clearStaleOverlays() {
+  clearStaleOverlays(rect?: { x0: number; y0: number; x1: number; y1: number }) {
     if (!this.overlays.length) return;
     this.maskStale = true;
     const keep: typeof this.overlays = [];
     for (const o of this.overlays) {
       if (o.epoch === this.epoch) { keep.push(o); continue; }
+      if (rect && (o.x0 >= rect.x1 || o.x1 <= rect.x0 || o.y0 >= rect.y1 || o.y1 <= rect.y0)) {
+        keep.push(o); continue;
+      }
       for (let y = Math.max(0, o.y0); y < Math.min(HEIGHT, o.y1); y++) {
         const row = y * WIDTH;
         for (let x = Math.max(0, o.x0); x < Math.min(WIDTH, o.x1); x++)

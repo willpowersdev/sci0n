@@ -3077,9 +3077,9 @@ export class PMachine {
       handle = this.alloc();
       this.savedBits.set(handle, this.screen.save(rect.x0, rect.y0, rect.x1, rect.y1));
     }
-    // Text written in an earlier cycle goes first, so each line replaces
-    // the one before rather than printing over it.
-    this.screen.clearStaleOverlays();
+    // Text written in an earlier cycle where this line is going goes
+    // first, so the line replaces it rather than printing over it.
+    this.screen.clearStaleOverlays(rect);
     if (bg >= 0) this.screen.fill(rect.x0, rect.y0, rect.x1, rect.y1, bg & 0x0F);
     this.drawText(font, text, px, py, fg, w, align);
     // Keep it: the next cycle restores the picture, and anything written
