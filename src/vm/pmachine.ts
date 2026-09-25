@@ -1634,7 +1634,7 @@ export class PMachine {
     for (const [o, e] of this.scenery) {
       const gone = (u16(this.prop(o, 'signal')) & 0x0008) !== 0;
       if (!gone && this.sceneryAt(o) === e.at) continue;   // still where it was
-      this.screen.castCovered(e.rect.x0, e.rect.y0, e.rect.x1, e.rect.y1);
+      this.screen.repaintPicture(e.rect.x0, e.rect.y0, e.rect.x1, e.rect.y1);
       this.scenery.delete(o);          // redrawn below if it is still about
     }
     this.screen.restoreCastAreas();
@@ -1705,11 +1705,9 @@ export class PMachine {
     // Each cel writes its priority as well as testing against it, so a
     // member drawn later cannot paint over one that is nearer the front.
     for (const d of drawn) {
-      this.screen.drawCel(d.cel, d.left, d.top, d.pri, true, true);
-      // Remembered so the picture can be put back under it next cycle --
-      // except for scenery, which is meant to stay where it was put.
       if (!d.scenery)
         this.screen.castCovered(d.left, d.top, d.left + d.cel.width, d.top + d.cel.height);
+      this.screen.drawCel(d.cel, d.left, d.top, d.pri, true, true);
     }
     this.animateStats.drawn += drawn.length;
   }

@@ -247,6 +247,7 @@ export class Screen {
     // narration stayed sitting over Camelot's first room.
     this.overlays.length = 0;
     this.windows.length = 0;
+    this.under.length = 0;
     this.maskStale = true;
     if (clear) { this.bgVisual.fill(0xFF); this.bgPriority.fill(0); this.control.fill(0); }
     this.bgVisual.set(pic.visual);
@@ -273,7 +274,8 @@ export class Screen {
    * Restoring only what was covered removes the problem rather than
    * working around it.
    */
-  private lastDrawn: Array<{ x0: number; y0: number; x1: number; y1: number }> = [];
+  /** What was on the screen under each cast member, in the order drawn. */
+  private under: Array<{ x0: number; y0: number; w: number; h: number; buf: Uint8Array }> = [];
 
   /**
    * Put the picture back under whatever the cast covered last cycle.
@@ -290,22 +292,51 @@ export class Screen {
     this.epoch++;
     this.priority.set(this.bgPriority);
     const guarded = this.windows.length > 0;
-    for (const r of this.lastDrawn) {
-      for (let y = Math.max(0, r.y0); y < Math.min(HEIGHT, r.y1); y++) {
-        const row = y * WIDTH;
-        for (let x = Math.max(0, r.x0); x < Math.min(WIDTH, r.x1); x++) {
-          if (guarded && this.behindWindow(x, y)) continue;
-          this.visual[row + x] = this.bgVisual[row + x];
+    /**
+     * Anything a window is standing over is still owed.
+     *
+     * The window has to be left alone -- Arthur beside the parser's
+     * message box took the first few letters off it every frame -- but
+     * dropping the saved bits because of that loses them for good, and
+     * the sprite's pixels are still sitting there when the window goes.
+     * Camelot's parser window left 111 pixels of Arthur behind it on
+     * the way out.  So an entry the window covered is carried over and
+     * tried again next cycle, and only a cycle that owes nothing clears
+     * the list.
+     */
+    const owed: typeof this.under = [];
+    for (let i = this.under.length - 1; i >= 0; i--) {
+      const r = this.under[i];
+      let skipped = false;
+      for (let y = 0; y < r.h; y++) {
+        const row = (r.y0 + y) * WIDTH;
+        for (let x = 0; x < r.w; x++) {
+          if (guarded && this.behindWindow(r.x0 + x, r.y0 + y)) { skipped = true; continue; }
+          this.visual[row + r.x0 + x] = r.buf[y * r.w + x];
         }
       }
+      if (skipped) owed.unshift(r);
     }
-    this.lastDrawn.length = 0;
+    this.under = owed;
     this.dirty = true;
   }
 
-  /** Note that the cast covered this rectangle, so it can be undone. */
+  /** Keep what is under a cel, before it is drawn over it. */
   castCovered(x0: number, y0: number, x1: number, y1: number) {
-    this.lastDrawn.push({ x0, y0, x1, y1 });
+    this.under.push(this.save(x0, y0, x1, y1));
+  }
+
+  /** Put the picture back over a rectangle now, for scenery coming off. */
+  repaintPicture(x0: number, y0: number, x1: number, y1: number) {
+    const guarded = this.windows.length > 0;
+    for (let y = Math.max(0, y0); y < Math.min(HEIGHT, y1); y++) {
+      const row = y * WIDTH;
+      for (let x = Math.max(0, x0); x < Math.min(WIDTH, x1); x++) {
+        if (guarded && this.behindWindow(x, y)) continue;
+        this.visual[row + x] = this.bgVisual[row + x];
+      }
+    }
+    this.dirty = true;
   }
 
   restore() {
@@ -399,9 +430,21 @@ export class Screen {
 
   /** Copy a rectangle out, so a window can put back what it covered. */
   save(x0: number, y0: number, x1: number, y1: number) {
-    x0 = Math.max(0, x0); y0 = Math.max(0, y0);
-    x1 = Math.min(WIDTH, x1); y1 = Math.min(HEIGHT, y1);
-    const w = Math.max(0, x1 - x0), h = Math.max(0, y1 - y0);
+    /**
+     * Clamped at both ends, and the far edge never in front of the
+     * near one.
+     *
+     * A rectangle wholly off the left of the screen arrives with both
+     * x's negative; clamping only the near one leaves the far one
+     * negative, and a negative end to `subarray` counts back from the
+     * end of the screen rather than meaning "empty".  That asks for
+     * almost the whole framebuffer and copies it into a buffer with no
+     * room, which throws.  KQ4's intro has a cel at -47,-17 a moment
+     * after Tamir appears, and the throw stopped the game dead there.
+     */
+    x0 = Math.max(0, Math.min(WIDTH, x0)); y0 = Math.max(0, Math.min(HEIGHT, y0));
+    x1 = Math.max(x0, Math.min(WIDTH, x1)); y1 = Math.max(y0, Math.min(HEIGHT, y1));
+    const w = x1 - x0, h = y1 - y0;
     const buf = new Uint8Array(w * h);
     for (let y = 0; y < h; y++)
       buf.set(this.visual.subarray((y0 + y) * WIDTH + x0, (y0 + y) * WIDTH + x1), y * w);

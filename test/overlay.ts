@@ -50,7 +50,7 @@ const vm = s.vm as unknown as Machine;
 /** The picture under the frame, which the class keeps to itself. */
 const screen = s.screen as unknown as {
   bgVisual: Uint8Array;
-  lastDrawn: Array<{ x0: number; y0: number; x1: number; y1: number }>;
+  castCovered(x0: number, y0: number, x1: number, y1: number): void;
   restoreCastAreas(): void;
 };
 
@@ -81,18 +81,21 @@ const overPicture = (x0: number, y0: number, x1: number, y1: number) => {
 
 // --- written text is the cast's to rub out ------------------------------
 {
+  /**
+   * The order is the purse's own.  Its panel is a view, drawn first --
+   * which is when the bits beneath it are kept.  The coin counts are
+   * written over the panel afterwards.  Disposing the panel puts those
+   * kept bits back: the room as it was, with no counts on it.
+   *
+   * So the save comes first, then the writing, and the restore has to
+   * take the writing away with it.
+   */
+  screen.restoreCastAreas();          // nothing outstanding from before
+  screen.castCovered(X, Y, X + W, Y + H);
   // Display(text, dsCOORD, x, y) -- code 100 carries the position.
   vm.kernel(display, [vm.makeString('MMMMMMMM'), 100, X, Y]);
   const wrote = overPicture(X, Y, X + W, Y + H);
   check(wrote > 0, `text was written over the picture at ${X},${Y} (${wrote} pixels)`);
-
-  /**
-   * Make the cast cover it, then let a cycle put the picture back.
-   *
-   * `lastDrawn` is where the cast was, and the restore walks exactly
-   * those rectangles -- which is the mechanism the purse relies on.
-   */
-  screen.lastDrawn = [{ x0: X, y0: Y, x1: X + W, y1: Y + H }];
   screen.restoreCastAreas();
   const left = overPicture(X, Y, X + W, Y + H);
   check(left < wrote / 4,
@@ -133,7 +136,9 @@ const overPicture = (x0: number, y0: number, x1: number, y1: number) => {
   const before = overPicture(left, top, right, bottom);
   check(before > 0, `a window painted itself over the picture at ${left},${top} (${before} pixels)`);
 
-  screen.lastDrawn = [{ x0: left, y0: top, x1: right, y1: bottom }];
+  // A sprite covered the same ground the window is standing on, and a
+  // cycle takes it away again: the window must not go with it.
+  screen.castCovered(left, top, right, bottom);
   screen.restoreCastAreas();
   const after = overPicture(left, top, right, bottom);
   check(after === before,
