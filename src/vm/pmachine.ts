@@ -498,11 +498,12 @@ export class PMachine {
    */
   run(scriptNo: number, obj: RtObject | null, pc: number,
       opts: { steps?: number; trace?: number; deadline?: number;
-              paramsBase?: number; resume?: boolean; keep?: boolean } = {}): RunResult {
+              paramsBase?: number; resume?: boolean; keep?: boolean;
+              nested?: boolean } = {}): RunResult {
     const limit = opts.steps ?? 20000;
     const deadline = opts.deadline ?? (Date.now() + 250);
-    this.traceLimit = opts.trace ?? 0;
-    this.trace = [];
+    const keepTrace = opts.nested ? this.trace : [];
+    if (!opts.nested) { this.traceLimit = opts.trace ?? 0; this.trace = []; }
     const res: RunResult = {
       steps: 0, stopped: 'step-limit', kernelCalls: new Map(),
       unresolvedSends: 0, unresolvedKind: new Map(), maxStack: 0, maxDepth: 0,
@@ -511,7 +512,9 @@ export class PMachine {
     // A fresh cycle is where a disposed clone is actually collected,
     // which is late enough for the cycle that disposed it to finish
     // using it.
-    if (!opts.resume) {
+    // A nested call is inside a cycle, not the start of one: sweeping
+    // there would collect clones the cycle is still using.
+    if (!opts.resume && !opts.nested) {
       for (const h of this.disposed) this.clones.delete(h);
       this.disposed.clear();
     }
@@ -528,6 +531,7 @@ export class PMachine {
     }
     if (!this.frames.length) { res.stopped = 'ret'; return res; }
 
+    if (opts.nested) this.trace = keepTrace;
     let yielded = false;
     while (res.steps < limit) {
       if ((res.steps & 0x0F) === 0 && Date.now() > deadline) {
@@ -1417,6 +1421,29 @@ export class PMachine {
     return false;
   }
 
+  /**
+   * Run one of an object's own methods and hand back what it returned.
+   *
+   * A kernel that has to ask the scripts something -- `DoAvoider` asks
+   * four different things -- cannot queue the call the way `Animate`
+   * does, because it needs the answer before it can decide what to do
+   * next.  So the method is run to completion on the spot: `run` stops
+   * as soon as the frame it pushed has returned, which makes this an
+   * ordinary nested call rather than a new cycle.
+   */
+  private callMethod(o: RtObject, name: string, params: number[] = []): number {
+    const sel = this.index.selectorId(name);
+    if (sel < 0) return 0;
+    const found = this.species.lookup(o.def, sel, o.scriptNo);
+    if (!found) return 0;
+    const pBase = this.stack.length;
+    this.stack.push(params.length, ...params);
+    this.run(found.script, o, found.offset,
+             { steps: 20000, keep: true, nested: true, paramsBase: pBase });
+    if (this.stack.length > pBase) this.stack.length = pBase;
+    return this.acc;
+  }
+
   /** An accumulator value that should name an object. */
   resolveTarget(f: Frame | null, ref: number): RtObject | null {
     if (ref === -1) return f?.obj ?? null;
@@ -2077,6 +2104,85 @@ export class PMachine {
        * script goes on asking: a mover that cannot finish is a room
        * that never moves on.
        */
+      /**
+       * The avoider, which is what actually drives an actor's mover.
+       *
+       * `Act::doit` reads its `avoider` and, when there is one, calls
+       * that and jumps straight past the branch that would have called
+       * the mover.  So an actor with an avoider moves only if this
+       * kernel ticks the mover for it.  Unimplemented, it returned
+       * zero, and King's Quest IV's unicorn galloped on the spot: its
+       * `MoveTo` was aimed correctly at x 350, off the right edge, and
+       * `DoBresen` was called exactly once in a hundred and seventy
+       * cycles of `Act::doit`.
+       *
+       * The shape is ScummVM's, written here from its description of
+       * what the kernel reads, asks and returns.  Nothing is blocked
+       * most of the time, and then the work is: step the mover, point
+       * the client at where it is going, and answer -1.  When the
+       * client is blocked, walk the compass from its own heading in
+       * 45 degree steps, in the direction the avoider is turning, and
+       * answer with the first heading it could actually stand in.
+       */
+      case 'DoAvoider': {
+        const SIGNAL = -1;
+        const avoider = this.resolveTarget(f ?? null, a0);
+        if (!avoider) return SIGNAL;
+        const client = this.resolveTarget(null, this.prop(avoider, 'client'));
+        if (!client) return SIGNAL;
+        if (!this.resolveTarget(null, this.prop(client, 'mover'))) return SIGNAL;
+
+        const mv = this.resolveTarget(null, this.prop(client, 'mover'))!;
+        this.callMethod(mv, 'doit');
+        // The move may have finished and taken the mover with it.
+        const mover = this.resolveTarget(null, this.prop(client, 'mover'));
+        if (!mover) return SIGNAL;
+
+        const blocked = this.callMethod(client, 'isBlocked') !== 0;
+        let turn = s16(u16(this.prop(avoider, 'heading')));
+        const cx = s16(u16(this.prop(client, 'x')));
+        const cy = s16(u16(this.prop(client, 'y')));
+
+        if (!blocked) {
+          if (turn === SIGNAL) return SIGNAL;
+          this.setProp(avoider, 'heading', SIGNAL);
+          const mx = s16(u16(this.prop(mover, 'x', cx)));
+          const my = s16(u16(this.prop(mover, 'y', cy)));
+          const dx = mx - cx, dy = my - cy;
+          const angle = (!dx && !dy) ? 0
+            : ((Math.round(Math.atan2(dx, -dy) * 180 / Math.PI) % 360) + 360) % 360;
+          const looper = this.resolveTarget(null, this.prop(client, 'looper'));
+          if (looper) this.callMethod(looper, 'doit', [angle, client.handle]);
+          else this.kernel(this.index.kernel.indexOf('DirLoop'), [client.handle, angle], f);
+          return SIGNAL;
+        }
+
+        // Which way round the compass to try, once, at random.
+        if (turn === SIGNAL) {
+          this.rng = (this.rng * 1103515245 + 12345) & 0x7FFFFFFF;
+          turn = (this.rng & 1) ? 45 : -45;
+        }
+        this.setProp(avoider, 'heading', turn);
+        const xStep = s16(u16(this.prop(client, 'xStep', 1))) || 1;
+        const yStep = s16(u16(this.prop(client, 'yStep', 1))) || 1;
+        const from = Math.floor(s16(u16(this.prop(client, 'heading'))) / 45) * 45;
+        for (let dir = from;;) {
+          dir += turn;
+          if (dir >= 360) dir -= 360;
+          if (dir < 0) dir += 360;
+          if (dir === from) break;                  // all the way round
+          // Clockwise from north, which is how SCI counts headings.
+          const east = dir > 0 && dir < 180 ? 1 : dir > 180 ? -1 : 0;
+          const north = dir < 90 || dir > 270 ? 1 : dir > 90 && dir < 270 ? -1 : 0;
+          this.setProp(client, 'x', cx + east * xStep);
+          this.setProp(client, 'y', cy - north * yStep);
+          if (this.callMethod(client, 'canBeHere')) return dir;
+        }
+        this.setProp(client, 'x', cx);
+        this.setProp(client, 'y', cy);
+        return SIGNAL;
+      }
+
       case 'DoBresen': {
         const mover = this.resolveTarget(null, a0);
         if (!mover) return 0;
