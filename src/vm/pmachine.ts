@@ -425,6 +425,28 @@ export class PMachine {
     return this.locals.get(n) ?? new Int32Array(0);
   }
 
+  /** Scripts asked to unload while they were still running. */
+  private unloadPending = new Set<number>();
+
+  /**
+   * Forget a script's objects and locals, so the next use rebuilds
+   * them from the resource with the values it was compiled with.
+   */
+  private unloadScript(n: number) {
+    const prefix = `${n}:`;
+    for (const key of [...this.objects.keys()])
+      if (key.startsWith(prefix)) this.objects.delete(key);
+    // The parsed script goes too, because that is what seeds the
+    // locals: dropping the locals alone leaves `script` believing it
+    // has already done the work, and the next load finds none.  KQ4's
+    // water region keeps the last ground it saw in local 1, so with no
+    // locals at all the read fell out of range, the comparison saw the
+    // accumulator it had just put there, and the region decided the
+    // ground had not changed -- every cycle, for ever.
+    this.locals.delete(n);
+    this.scripts.delete(n);
+  }
+
   /** Runtime instance of a static object, with its own mutable properties. */
   instantiate(scriptNo: number, def: SciObject): RtObject {
     const key = `${scriptNo}:${def.offset}`;
@@ -517,6 +539,9 @@ export class PMachine {
     if (!opts.resume && !opts.nested) {
       for (const h of this.disposed) this.clones.delete(h);
       this.disposed.clear();
+      // Scripts that asked to go while they were running have finished.
+      for (const n of this.unloadPending) this.unloadScript(n);
+      this.unloadPending.clear();
     }
     const base = opts.resume ? 0 : this.frames.length;
     const floor = opts.resume ? 0 : this.stack.length;
@@ -2876,7 +2901,32 @@ export class PMachine {
         return r.matched ? 1 : 0;
       }
 
-      case 'DisposeScript': case 'FlushResources': case 'MemoryInfo':
+      /**
+       * Unload a script, so that loading it again starts it over.
+       *
+       * A no-op here, and that quietly broke every region KQ4 shares
+       * between rooms.  `Rm::setRegions` asks each region whether it is
+       * `initialized` and only calls `init` when it is not; `init` is
+       * what puts the region into the list the game cycles.  SCI's
+       * answer is fresh each room because leaving one unloads its
+       * scripts and `ScriptID` loads them again with their properties
+       * back at the values the resource carries.  Keeping the objects
+       * for ever left `initialized` at 1 from the room before, so
+       * `waterReg` was never added again and its `doit` -- which is
+       * what looks at the ground under the ego and swaps her to a
+       * wading view -- stopped running after the first room that used
+       * it.  Rosella walked on top of the creek.
+       *
+       * A script that is running stays until it is not, which is what
+       * the lock count does in the real interpreter.
+       */
+      case 'DisposeScript': {
+        const n = u16(a0);
+        if (this.frames.some(fr => fr.scriptNo === n)) this.unloadPending.add(n);
+        else this.unloadScript(n);
+        return args.length > 1 ? a1 : this.acc;
+      }
+      case 'FlushResources': case 'MemoryInfo':
       case 'SetSynonyms':
       case 'GetSaveDir': case 'GetCWD':
       case 'FileIO':
