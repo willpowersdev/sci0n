@@ -44,19 +44,37 @@ s.now = () => clock;
 const s16 = (v: number) => (v << 16) >> 16;
 const step = (n: number) => { for (let i = 0; i < n; i++) { clock += 1000 / 60; st = s.tick(); } };
 
-// Through the intro and the restart, out of the beach and east.
+// Through the intro and the restart, into the game.
 let st = s.tick();
 for (let i = 0; i < 36000 && st.running; i++) { clock += 1000 / 60; st = s.tick(); }
-for (let k = 0; k < 40 && st.picture === 25; k++) { s.key(0x4D00); step(30); }
-check(st.picture === 26, `the room east of the beach is open (picture ${st.picture})`);
 
 interface Machine {
   drawCast(h: number): void;
   listValues(h: number): number[];
   resolveTarget(a: null, v: number): object | null;
   prop(o: unknown, n: string): number;
+  callMethod(o: unknown, name: string, params?: number[]): number;
+  globals: Int32Array;
 }
 const vm = s.vm as unknown as Machine;
+
+/**
+ * Which room the unicorn is in, which the game decides by tossing a
+ * die.  `regUnicorn::init` draws `Random(1, 3)` the first time one of
+ * its rooms is entered and keeps the answer in global 124 -- so the
+ * unicorn is in one of three, and a test that always walked east was
+ * passing on the draw rather than on the code.  It moved the moment
+ * anything else shifted the random sequence along.
+ *
+ * The die is settled here before it is thrown, so this measures the
+ * avoider rather than the draw: 26 is the room east of the beach.
+ */
+const room = 26;
+vm.globals[124] = room;
+for (let k = 0; k < 40 && st.picture === 25; k++) { s.key(0x4D00); step(30); }
+check(s16(vm.globals[124]) === room,
+  `the unicorn is put in room ${room} rather than left to the dice`);
+check(st.picture === room, `and that room is open (picture ${st.picture})`);
 
 /** Where the unicorn is, cycle by cycle, and whether it is still here. */
 const seen: string[] = [];
@@ -78,9 +96,9 @@ vm.drawCast = (h: number) => {
   if (t && seen[seen.length - 1] !== t) seen.push(t);
 };
 
-for (let k = 0; k < 60 && st.picture === 26; k++) { s.key(0x4D00); step(20); }
+for (let k = 0; k < 60 && st.picture === room; k++) { s.key(0x4D00); step(20); }
 
-check(ever, 'the unicorn is in the room');
+check(ever, `the unicorn is in room ${room}`);
 const places = seen.filter(t => t !== 'gone');
 const xs = places.map(t => Number(t.split(',')[0]));
 const from = xs[0] ?? 0, to = xs[xs.length - 1] ?? 0;

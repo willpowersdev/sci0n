@@ -1744,6 +1744,56 @@ export class PMachine {
     this.animateStats.drawn += drawn.length;
   }
 
+  /**
+   * The step `DoBresen` takes on the cycles that are the actor's turn.
+   */
+  private bresenStep(mover: RtObject, client: RtObject) {
+    const cx = s16(u16(this.prop(client, 'x')));
+    const cy = s16(u16(this.prop(client, 'y')));
+    const tx = s16(u16(this.prop(mover, 'x', cx)));
+    const ty = s16(u16(this.prop(mover, 'y', cy)));
+    this.setProp(mover, 'xLast', cx);
+    this.setProp(mover, 'yLast', cy);
+    const dx = s16(u16(this.prop(mover, 'dx')));
+    const dy = s16(u16(this.prop(mover, 'dy')));
+    const onX = this.prop(mover, 'b-xAxis') !== 0;
+    // Arrived, or near enough that one more step would pass it.
+    if (onX ? Math.abs(tx - cx) < Math.abs(dx) || dx === 0
+            : Math.abs(ty - cy) < Math.abs(dy) || dy === 0) {
+      this.setProp(client, 'x', tx);
+      this.setProp(client, 'y', ty);
+      return;
+    }
+    const i1 = s16(u16(this.prop(mover, 'b-i1')));
+    const i2 = s16(u16(this.prop(mover, 'b-i2')));
+    const incr = s16(u16(this.prop(mover, 'b-incr')));
+    let di = s16(u16(this.prop(mover, 'b-di')));
+    let nx = cx + dx, ny = cy + dy;
+    if (di < 0) di += i1;
+    else { di += i2; if (onX) ny += incr; else nx += incr; }
+    /**
+     * A step onto ground this actor may not stand on is taken back.
+     *
+     * The line state goes back with it, or the error term would carry
+     * a step that never happened and the actor would drift off the
+     * line.  The client is told by its signal, which is what
+     * `Act::doit` and the avoiders read.
+     *
+     * A move out of a bad position is always allowed, so an actor put
+     * somewhere illegal by a script can still get out.
+     */
+    if (!this.legalAt(client, nx, ny) && this.legalAt(client, cx, cy)) {
+      this.setProp(client, 'signal',
+        u16(this.prop(client, 'signal')) | SIGNAL_HIT_OBSTACLE);
+      return;
+    }
+    this.setProp(client, 'signal',
+      u16(this.prop(client, 'signal')) & ~SIGNAL_HIT_OBSTACLE);
+    this.setProp(client, 'x', nx);
+    this.setProp(client, 'y', ny);
+    this.setProp(mover, 'b-di', di);
+  }
+
   /** Sierra's y -> priority band. */
   priorityOf(y: number): number {
     const bands = this.picBands;
@@ -2188,56 +2238,38 @@ export class PMachine {
         return SIGNAL;
       }
 
+      /**
+       * One step along the line, when this cycle is the actor's turn.
+       *
+       * The turn is what `b-moveCnt` counts, and it is the kernel's to
+       * keep in SCI0 -- ScummVM calls that `kIncrementMoveCount`, which
+       * is what every SCI0 and SCI01 game gets.  The count goes up each
+       * call, and the step is taken only once it has passed the
+       * client's `moveSpeed`, whereupon it goes back to nought.
+       *
+       * Nought is the part that matters beyond pacing.  `Motion::
+       * triedToMove` is exactly `b-moveCnt == 0`, and `Act::isStopped`
+       * answers "not stopped" whenever a mover says it did not try.
+       * `Walk::doit` advances the walking cel only while the actor is
+       * not stopped -- so a counter that never returns to nought means
+       * a blocked actor is never stopped, and her legs go on walking
+       * against the obstacle for as long as the key is held.  This used
+       * to increment and never reset, and that is what Rosella did at
+       * every wall.
+       */
       case 'DoBresen': {
         const mover = this.resolveTarget(null, a0);
         if (!mover) return 0;
         const client = this.resolveTarget(null, this.prop(mover, 'client'));
         if (!client) return 0;
-        const cx = s16(u16(this.prop(client, 'x')));
-        const cy = s16(u16(this.prop(client, 'y')));
-        const tx = s16(u16(this.prop(mover, 'x', cx)));
-        const ty = s16(u16(this.prop(mover, 'y', cy)));
-        this.setProp(mover, 'xLast', cx);
-        this.setProp(mover, 'yLast', cy);
-        const dx = s16(u16(this.prop(mover, 'dx')));
-        const dy = s16(u16(this.prop(mover, 'dy')));
-        const onX = this.prop(mover, 'b-xAxis') !== 0;
-        // Arrived, or near enough that one more step would pass it.
-        if (onX ? Math.abs(tx - cx) < Math.abs(dx) || dx === 0
-                : Math.abs(ty - cy) < Math.abs(dy) || dy === 0) {
-          this.setProp(client, 'x', tx);
-          this.setProp(client, 'y', ty);
-          return 0;
+        let moveCnt = u16(this.prop(mover, 'b-moveCnt')) + 1;
+        // No `moveSpeed` means nought, which is a step every cycle.
+        const speed = s16(u16(this.prop(client, 'moveSpeed', 0)));
+        if (speed < moveCnt) {
+          moveCnt = 0;
+          this.bresenStep(mover, client);
         }
-        const i1 = s16(u16(this.prop(mover, 'b-i1')));
-        const i2 = s16(u16(this.prop(mover, 'b-i2')));
-        const incr = s16(u16(this.prop(mover, 'b-incr')));
-        let di = s16(u16(this.prop(mover, 'b-di')));
-        let nx = cx + dx, ny = cy + dy;
-        if (di < 0) di += i1;
-        else { di += i2; if (onX) ny += incr; else nx += incr; }
-        /**
-         * A step onto ground this actor may not stand on is taken back.
-         *
-         * The line state goes back with it, or the error term would
-         * carry a step that never happened and the actor would drift
-         * off the line.  The client is told by its signal, which is
-         * what `Act::doit` and the avoiders read.
-         *
-         * A move out of a bad position is always allowed, so an actor
-         * put somewhere illegal by a script can still get out.
-         */
-        if (!this.legalAt(client, nx, ny) && this.legalAt(client, cx, cy)) {
-          this.setProp(client, 'signal',
-            u16(this.prop(client, 'signal')) | SIGNAL_HIT_OBSTACLE);
-          return 0;
-        }
-        this.setProp(client, 'signal',
-          u16(this.prop(client, 'signal')) & ~SIGNAL_HIT_OBSTACLE);
-        this.setProp(client, 'x', nx);
-        this.setProp(client, 'y', ny);
-        this.setProp(mover, 'b-di', di);
-        this.setProp(mover, 'b-moveCnt', u16(this.prop(mover, 'b-moveCnt')) + 1);
+        this.setProp(mover, 'b-moveCnt', moveCnt);
         return 0;
       }
 
