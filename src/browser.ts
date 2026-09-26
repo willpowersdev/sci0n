@@ -48,6 +48,8 @@ const off = document.createElement('canvas');
 const octx = off.getContext('2d')!;
 
 let game: Game | null = null;
+/** Which game is open, so its saved games are kept apart from another's. */
+let gameName = '';
 /** Selector and kernel names; built once per game, not per resource. */
 let index: Index | null = null;
 let groups: Map<number, string[]> | null = null;
@@ -553,6 +555,41 @@ function pumpAudio(s: Session) {
   }
 }
 
+/**
+ * Saved games, kept for as long as the tab is open.
+ *
+ * A cookie was the obvious place and will not do: one holds about four
+ * kilobytes and a King's Quest IV save is fifty, being every global,
+ * every script's locals and four hundred clones.  `sessionStorage` is
+ * the same lifetime -- this tab, until it closes -- with room for it,
+ * so that is where they go.  Nothing is sent anywhere.
+ *
+ * Each game has its own drawer, because slot 1 means something
+ * different in each.
+ */
+const savesKey = () => `sci0n:saves:${gameName || 'game'}`;
+
+function keepSaves(s: Session) {
+  try {
+    sessionStorage.setItem(savesKey(), JSON.stringify([...s.saves]));
+  } catch {
+    // A full or blocked store is not worth losing the game over; the
+    // save still stands for this session, it just will not outlive a
+    // reload.
+  }
+}
+
+function loadSaves(s: Session) {
+  try {
+    const raw = sessionStorage.getItem(savesKey());
+    if (!raw) return;
+    for (const [slot, entry] of JSON.parse(raw) as Array<[number, { name: string; snap: never }]>)
+      s.saves.set(slot, entry);
+  } catch {
+    // Unreadable or from an older shape: start the drawer empty.
+  }
+}
+
 function startPlay() {
   if (!game) return;
   stopAnim(); stopSound();
@@ -560,6 +597,8 @@ function startPlay() {
   if (!s.ready) { $('gameinfo').textContent = 'this game exposes no entry point'; return; }
   session = s;
   (globalThis as { __lastSession?: Session }).__lastSession = s;
+  loadSaves(s);
+  s.onSave = () => keepSaves(s);
   document.body.classList.add('play');
   stageMode(false);
   ($('quit') as HTMLElement).hidden = false;
@@ -1574,6 +1613,7 @@ async function openGame(name: string) {
   $('gameinfo').textContent = `loading ${titleOf(name)}…`;
   try {
     adopt(new Game(await sourceFromServer(name)));
+    gameName = name;
     document.title = `SCI0 Explorer — ${titleOf(name)}`;
     history.replaceState(null, '', `?game=${encodeURIComponent(name)}`);
   } catch (err) {

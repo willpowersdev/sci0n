@@ -8,16 +8,17 @@
  */
 import type { Game } from '../resources.ts';
 import { Index } from '../script.ts';
-import { PMachine, EV } from './pmachine.ts';
+import { type Snapshot, PMachine, EV } from './pmachine.ts';
 import { WIDTH, SCREEN_HEIGHT } from './screen.ts';
 
 /**
- * What `GameIsRestarting` answers with after a restart.
+ * What `GameIsRestarting` answers with afterwards.
  *
- * SCI distinguishes a restart from a restore, and the scripts only
- * test it for truth, but the number is the one the interpreter uses.
+ * ScummVM's numbering: none is 0, a restart is 1 and a restore is 2.
+ * The scripts mostly test it for truth, but `Game::replay` is reached
+ * by the restore and not by the restart, so the two are kept apart.
  */
-const RESTARTING = 2;
+const RESTARTING = 1, RESTORING = 2;
 
 export { WIDTH, SCREEN_HEIGHT };
 
@@ -114,6 +115,15 @@ export class Session {
   /** Build the machine and find `play`, which is also what a restart does. */
   private begin() {
     this.vm = new PMachine(this.game, this.index);
+    // The wipes are paced off the same clock the session runs on, so a
+    // harness driving frames by hand sees them advance too.
+    this.vm.wallClock = () => this.now();
+    this.vm.putSave = (slot, snap, name) => {
+      this.saves.set(slot, { name, snap });
+      this.onSave?.();
+      return true;
+    };
+    this.vm.getSave = (slot) => this.saves.get(slot)?.snap ?? null;
     this.entry = null;
     const obj = this.vm.resolveTarget(null, this.vm.scriptID(0, 0));
     if (!obj) return;
@@ -140,12 +150,15 @@ export class Session {
    * `KQ4::init` sends the player to the beach when `GameIsRestarting`
    * says yes.
    */
-  private restart() {
+  private restart(snap: Snapshot | null = null) {
     this.vm.sounds.stopAll();
     const { undither, statusVisible } = this.vm.screen;
     const output = this.vm.sounds.output;
+    const putSave = this.vm.putSave, getSave = this.vm.getSave;
     this.begin();
-    this.vm.restarting = RESTARTING;
+    this.vm.putSave = putSave; this.vm.getSave = getSave;
+    if (snap) this.vm.restoreFrom(snap);
+    this.vm.restarting = snap ? RESTORING : RESTARTING;
     this.vm.screen.undither = undither;
     this.vm.screen.statusVisible = statusVisible;
     this.vm.sounds.output = output;
@@ -153,6 +166,17 @@ export class Session {
     this.started_at = 0;
     this.ticksIssued = 0;
   }
+
+  /**
+   * The saved games, which live as long as the session does.
+   *
+   * SCI hands the slot number and the description to the interpreter
+   * and expects it to find somewhere to put them; here that is the
+   * host's business, and the page keeps them for the tab.
+   */
+  saves = new Map<number, { name: string; snap: Snapshot }>();
+  /** Told after every save, so a host can put them somewhere. */
+  onSave: (() => void) | null = null;
 
   get ready() { return this.entry !== null; }
   get screen() { return this.vm.screen; }
@@ -198,6 +222,9 @@ export class Session {
                             picture: this.vm.currentPic, ...this.done };
     const now = this.now();
     if (!this.started_at) this.started_at = now;
+    // A picture still arriving is shown a piece at a time on its way
+    // to the glass; the game itself carries on as though it were there.
+    if (this.screen.wiping) this.screen.advanceWipe(now);
     const due = Math.floor((now - this.started_at) * this.ticksPerSecond / 1000);
     if (due > this.ticksIssued) {
       // Cap the catch-up so a page that was in a background tab does not
@@ -214,7 +241,9 @@ export class Session {
     // A restart is not the end of the game: the machine is thrown away
     // and built again, and the next tick runs `play` on the new one.
     if (r.stopped === 'restart') {
-      this.restart();
+      const snap = this.vm.restoreRequested;
+      this.vm.restoreRequested = null;
+      this.restart(snap);
       return { running: true, instructions: this.instructions, frames: this.frames,
                picture: this.vm.currentPic };
     }

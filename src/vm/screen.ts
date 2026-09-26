@@ -23,6 +23,44 @@ export { WIDTH, HEIGHT };
 export const STATUS_HEIGHT = 10;
 export const SCREEN_HEIGHT = HEIGHT + STATUS_HEIGHT;
 
+/**
+ * The styles a picture can arrive in, after SCI0's numbering is
+ * translated.
+ *
+ * `DrawPic`'s second argument carries the number in its low byte, and
+ * ScummVM keeps a table turning the old numbers into these -- 0 and 1
+ * are the rolls, 2 to 5 the straight wipes, 8 blocks, 9 and 10 the
+ * rolls closing instead of opening, 18 the pixel dissolve, 30 a fade,
+ * and 100 no transition at all.  11 to 17 are 2 to 8 again with the
+ * blackout flag, which plays the opposite wipe to black first.
+ */
+export type Wipe = 'none' | 'pixels' | 'blocks' | 'fade'
+  | 'from-left' | 'from-right' | 'from-top' | 'from-bottom'
+  | 'open-across' | 'shut-across' | 'open-down' | 'shut-down';
+
+const OLD_WIPES: Record<number, [Wipe, boolean]> = {
+  0: ['open-across', false], 1: ['open-down', false],
+  2: ['from-right', false], 3: ['from-left', false],
+  4: ['from-bottom', false], 5: ['from-top', false],
+  6: ['shut-across', false], 7: ['open-across', false],
+  8: ['blocks', false],
+  9: ['shut-across', false], 10: ['shut-down', false],
+  11: ['from-right', true], 12: ['from-left', true],
+  13: ['from-bottom', true], 14: ['from-top', true],
+  15: ['shut-across', true], 16: ['open-across', true],
+  17: ['blocks', true],
+  18: ['pixels', false], 27: ['pixels', true],
+  30: ['fade', false],
+  40: ['from-right', false], 41: ['from-left', false],
+  42: ['from-top', false], 43: ['from-bottom', false],
+  100: ['none', false],
+};
+
+/** What SCI0 asked for, as a style and whether to black out first. */
+export function wipeFor(animationNr: number): [Wipe, boolean] {
+  return OLD_WIPES[animationNr & 0xFF] ?? ['none', false];
+}
+
 export class Screen {
   /** Palette bytes, so a dither pair survives to the renderer. */
   visual = new Uint8Array(WIDTH * HEIGHT).fill(0xFF);
@@ -257,6 +295,172 @@ export class Screen {
   }
 
   /** Put the background on the screen, which is what `Animate` does. */
+  /**
+   * A picture arriving a piece at a time.
+   *
+   * SCI does this in a loop of its own with the interpreter stopped,
+   * copying rectangles of the new screen over the old and sleeping
+   * between them; the numbers below are its numbers -- nine
+   * milliseconds per thousand pixels dissolved, five per eight blocks,
+   * two a column for a sideways wipe, four a row for a vertical one,
+   * three and four for the rolls.  Here the loop is spread over frames
+   * instead, and the session holds the game still while it runs, which
+   * is the same thing seen from the outside.
+   */
+  private wipe: {
+    style: Wipe; blackout: boolean; began: number; owed: number;
+    mask: number; step: number; a: number; b: number; done: boolean;
+  } | null = null;
+  /** The screen as it was, shown wherever the new one has not arrived. */
+  private wipeFrom = new Uint8Array(WIDTH * HEIGHT);
+  /** Which pixels the new picture has reached. */
+  private wipeMask = new Uint8Array(WIDTH * HEIGHT);
+
+  /** Is a picture still arriving? */
+  get wiping() { return this.wipe !== null; }
+
+  /** Start showing the picture that is already in the background. */
+  beginWipe(style: Wipe, blackout: boolean, now: number) {
+    if (style === 'none') { this.reveal(); this.wipe = null; return; }
+    // The screen as it stands is the one being left, so it is kept
+    // before the new picture is put into place, not after.
+    this.wipeFrom.set(this.visual);
+    this.reveal();
+    /**
+     * The wipe is put over the picture on its way to the glass, not
+     * into the screen the game is drawing on.
+     *
+     * SCI does it the other way about -- it stops the interpreter and
+     * copies the new screen over the old a piece at a time.  Doing
+     * that here held the game still for as long as the wipe took, and
+     * the intro came apart: the title's numerals were drawn and then
+     * painted over, and a credit stayed on the screen for sixty cycles
+     * while the sequence caught up.  The game has no business knowing
+     * about this, so it does not: it draws as it always did, and what
+     * has not been reached yet shows the screen as it was.
+     */
+    this.wipeMask.fill(0);
+    this.wipe = { style, blackout, began: now, owed: 0, mask: 0x40, step: 0,
+                  a: 0, b: 0, done: false };
+    this.advanceWipe(now);
+  }
+
+  /** Say the new picture has reached a rectangle. */
+  private wipeRect(x0: number, y0: number, x1: number, y1: number) {
+    for (let y = Math.max(0, y0); y < Math.min(HEIGHT, y1); y++) {
+      const row = y * WIDTH;
+      for (let x = Math.max(0, x0); x < Math.min(WIDTH, x1); x++) this.wipeMask[row + x] = 1;
+    }
+    this.dirty = true;
+  }
+
+  /**
+   * Carry the wipe up to `now`.  Returns true while it is still going.
+   */
+  advanceWipe(now: number): boolean {
+    const w = this.wipe;
+    if (!w) return false;
+    const elapsed = now - w.began;
+    let guard = 0;
+    while (!w.done && w.owed <= elapsed && guard++ < 200000) this.wipeOnce(w);
+    if (w.done) { this.wipe = null; this.dirty = true; return false; }
+    return true;
+  }
+
+  /** One unit of work, and what SCI charges for it in milliseconds. */
+  private wipeOnce(w: NonNullable<Screen['wipe']>) {
+    switch (w.style) {
+      case 'pixels': {
+        // The same shift register SCI uses, so the order is its order.
+        for (let i = 0; i < 1024; i++) {
+          w.mask = (w.mask & 1) ? (w.mask >> 1) ^ 0xB400 : w.mask >> 1;
+          if (w.mask < WIDTH * HEIGHT) {
+            const x = w.mask % WIDTH, y = (w.mask / WIDTH) | 0;
+            this.wipeRect(x, y, x + 1, y + 1);
+          }
+          if (w.mask === 0x40) { w.done = true; break; }
+        }
+        w.owed += 9;
+        break;
+      }
+      case 'blocks': {
+        for (let i = 0; i < 8; i++) {
+          w.mask = (w.mask & 1) ? (w.mask >> 1) ^ 0x240 : w.mask >> 1;
+          if (w.mask < 40 * 25) {
+            const x = (w.mask % 40) << 3, y = ((w.mask / 40) | 0) << 3;
+            this.wipeRect(x, y, x + 8, y + 8);
+          }
+          if (w.mask === 0x40) { w.done = true; break; }
+        }
+        w.owed += 5;
+        break;
+      }
+      case 'from-left':
+        this.wipeRect(w.a, 0, w.a + 1, HEIGHT);
+        if (++w.a >= WIDTH) w.done = true;
+        if ((w.step++ & 1) === 0) w.owed += 2;
+        break;
+      case 'from-right':
+        this.wipeRect(WIDTH - 1 - w.a, 0, WIDTH - w.a, HEIGHT);
+        if (++w.a >= WIDTH) w.done = true;
+        if ((w.step++ & 1) === 0) w.owed += 2;
+        break;
+      case 'from-top':
+        this.wipeRect(0, w.a, WIDTH, w.a + 1);
+        if (++w.a >= HEIGHT) w.done = true;
+        w.owed += 4;
+        break;
+      case 'from-bottom':
+        this.wipeRect(0, HEIGHT - 1 - w.a, WIDTH, HEIGHT - w.a);
+        if (++w.a >= HEIGHT) w.done = true;
+        w.owed += 4;
+        break;
+      case 'open-across': {
+        // Two columns leaving the middle, as verticalRollFromCenter.
+        const mid = WIDTH >> 1;
+        this.wipeRect(mid - 1 - w.a, 0, mid - w.a, HEIGHT);
+        this.wipeRect(mid + w.a, 0, mid + w.a + 1, HEIGHT);
+        if (++w.a > mid) w.done = true;
+        w.owed += 3;
+        break;
+      }
+      case 'shut-across': {
+        // And the same closing in on it.
+        this.wipeRect(w.a, 0, w.a + 1, HEIGHT);
+        this.wipeRect(WIDTH - 1 - w.a, 0, WIDTH - w.a, HEIGHT);
+        if (++w.a > (WIDTH >> 1)) w.done = true;
+        w.owed += 3;
+        break;
+      }
+      case 'open-down': {
+        const mid = HEIGHT >> 1;
+        this.wipeRect(0, mid - 1 - w.a, WIDTH, mid - w.a);
+        this.wipeRect(0, mid + w.a, WIDTH, mid + w.a + 1);
+        if (++w.a > mid) w.done = true;
+        w.owed += 4;
+        break;
+      }
+      case 'shut-down': {
+        this.wipeRect(0, w.a, WIDTH, w.a + 1);
+        this.wipeRect(0, HEIGHT - 1 - w.a, WIDTH, HEIGHT - w.a);
+        if (++w.a > (HEIGHT >> 1)) w.done = true;
+        w.owed += 4;
+        break;
+      }
+      case 'fade': {
+        // SCI fades the palette; with a fixed EGA palette the nearest
+        // honest thing is to bring the picture up in even steps.
+        const bands = 16;
+        for (let y = w.a; y < HEIGHT; y += bands) this.wipeRect(0, y, WIDTH, y + 1);
+        if (++w.a >= bands) w.done = true;
+        w.owed += 30;
+        break;
+      }
+      default:
+        w.done = true;
+    }
+  }
+
   reveal() {
     this.restore();
     this.dirty = true;
@@ -589,9 +793,12 @@ export class Screen {
         const o = (y * WIDTH + x) * 3;
         out[o] = c[0]; out[o + 1] = c[1]; out[o + 2] = c[2];
       }
+    const wiping = this.wipe !== null, black = this.wipe?.blackout ?? false;
     for (let y = 0; y < HEIGHT; y++) {
       for (let x = 0; x < WIDTH; x++) {
-        const v = this.visual[y * WIDTH + x];
+        const i = y * WIDTH + x;
+        const v = !wiping || this.wipeMask[i] ? this.visual[i]
+                : black ? 0 : this.wipeFrom[i];
         const c = this.undither ? BLENDED_RGB[v] : EGA_RGB[ditherPixel(v, x, y)];
         const o = ((y + top) * WIDTH + x) * 3;
         out[o] = c[0]; out[o + 1] = c[1]; out[o + 2] = c[2];

@@ -23,7 +23,7 @@ import { View, type Cel } from '../view.ts';
 import { Picture } from '../pic.ts';
 import { Font, Cursor } from '../font.ts';
 import { strings as textStrings } from '../text.ts';
-import { Screen, WIDTH, HEIGHT } from './screen.ts';
+import { type Wipe, wipeFor, Screen, WIDTH, HEIGHT } from './screen.ts';
 import { SoundBox, SIGNAL_FINISHED } from './sounds.ts';
 import { MenuBar, SM } from './menu.ts';
 import { Parser } from './parser.ts';
@@ -297,6 +297,32 @@ export interface RunResult {
   deadline?: number;
 }
 
+/**
+ * Everything a saved game has to put back.
+ *
+ * ScummVM's `gamestate_restore` resets the engine, reads the segment
+ * manager back -- scripts' locals, clones, the object heap -- puts the
+ * stack and the clones together again, and then aborts whatever was
+ * running and re-enters `play` with `gameIsRestarting` set to restore.
+ * The scripts do the rest: `Game::replay` reads the globals it has
+ * just been handed and builds the room again.  So what is kept here is
+ * the state the scripts own, and nothing about the screen: the room
+ * redraws itself.
+ */
+export interface Snapshot {
+  globals: number[];
+  locals: Array<[number, number[]]>;
+  objects: Array<[string, number[]]>;
+  clones: Array<[number, { script: number; offset: number; props: number[] }]>;
+  lists: Array<[number, { first: number; last: number }]>;
+  nodes: Array<[number, { key: number; value: number; prev: number; next: number }]>;
+  strings: Array<[number, string]>;
+  nextHandle: number;
+  rng: number;
+  ticks: number;
+  picture: number;
+}
+
 export class PMachine {
   game: Game; index: Index; species: SpeciesTable;
   globals = new Int32Array(1024);
@@ -427,6 +453,73 @@ export class PMachine {
     if (!this.locals.has(n)) this.script(n);
     return this.locals.get(n) ?? new Int32Array(0);
   }
+
+  /** The state a saved game keeps, as ScummVM's serialiser keeps it. */
+  snapshot(): Snapshot {
+    return {
+      globals: Array.from(this.globals),
+      locals: [...this.locals].map(([n, v]) => [n, Array.from(v)] as [number, number[]]),
+      objects: [...this.objects].map(([k, o]) => [k, Array.from(o.props)] as [string, number[]]),
+      clones: [...this.clones].map(([h, o]) =>
+        [h, { script: o.scriptNo, offset: o.def.offset, props: Array.from(o.props) }] as
+          [number, { script: number; offset: number; props: number[] }]),
+      lists: [...this.lists].map(([h, l]) => [h, { ...l }] as [number, { first: number; last: number }]),
+      nodes: [...this.nodes].map(([h, n]) => [h, { ...n }] as
+        [number, { key: number; value: number; prev: number; next: number }]),
+      strings: [...this.strings],
+      nextHandle: this.nextHandle,
+      rng: this.rng,
+      ticks: this.ticks,
+      picture: this.currentPic,
+    };
+  }
+
+  /**
+   * Put a saved game back.
+   *
+   * Called on a machine built fresh, so everything the scripts own is
+   * simply written over what a new game had.
+   */
+  restoreFrom(snap: Snapshot) {
+    this.globals.fill(0);
+    for (let i = 0; i < snap.globals.length && i < this.globals.length; i++)
+      this.globals[i] = snap.globals[i];
+    this.locals.clear();
+    for (const [n, v] of snap.locals) this.locals.set(n, Int32Array.from(v));
+    for (const [key, props] of snap.objects) {
+      const cut = key.indexOf(':');
+      const scriptNo = Number(key.slice(0, cut)), offset = Number(key.slice(cut + 1));
+      const def = this.script(scriptNo)?.objects.find(d => d.offset === offset);
+      if (!def) continue;
+      const o = this.instantiate(scriptNo, def);
+      for (let i = 0; i < props.length && i < o.props.length; i++) o.props[i] = props[i];
+    }
+    this.clones.clear();
+    for (const [h, c] of snap.clones) {
+      const def = this.script(c.script)?.objects.find(d => d.offset === c.offset);
+      if (!def) continue;
+      const sels = def.propSelectors ?? this.species.classOf(def.species)?.propSelectors ?? [];
+      const o = new RtObject(def, c.script, sels);
+      o.handle = h;
+      for (let i = 0; i < c.props.length && i < o.props.length; i++) o.props[i] = c.props[i];
+      this.clones.set(h, o);
+    }
+    this.lists.clear();
+    for (const [h, l] of snap.lists) this.lists.set(h, { ...l });
+    this.nodes.clear();
+    for (const [h, n] of snap.nodes) this.nodes.set(h, { ...n });
+    this.strings.clear();
+    for (const [h, t] of snap.strings) this.strings.set(h, t);
+    this.nextHandle = snap.nextHandle;
+    this.rng = snap.rng;
+    this.ticks = snap.ticks;
+  }
+
+  /** Where a saved game is kept, which is the host's business. */
+  putSave: ((slot: number, snap: Snapshot, name: string) => boolean) | null = null;
+  getSave: ((slot: number) => Snapshot | null) | null = null;
+  /** A restore waiting for the machine to be built again. */
+  restoreRequested: Snapshot | null = null;
 
   /** Scripts asked to unload while they were still running. */
   private unloadPending = new Set<number>();
@@ -1570,8 +1663,14 @@ export class PMachine {
     if (!this.pendingPic) return;
     this.pendingPic = false;
     this.picNotValid = 0;
-    this.screen.reveal();
+    const [style, blackout] = this.pendingWipe;
+    this.pendingWipe = ['none', false];
+    this.screen.beginWipe(style, blackout, this.wallClock());
   }
+
+  /** Where the wipes get their timing; a harness can hand over a clock. */
+  wallClock: () => number = () => Date.now();
+  private pendingWipe: [Wipe, boolean] = ['none', false];
 
 
   /** Walk a list to its values, cycle-guarded against damaged links. */
@@ -1962,6 +2061,11 @@ export class PMachine {
           this.currentPic = a0;
           this.pendingPic = true;
           this.picNotValid = 1;
+          // The low byte of the flags is how the picture is to arrive,
+          // and bit 15 asks for the opposite wipe to black first.
+          const flags = u16(args[1] ?? 0);
+          this.pendingWipe = wipeFor(flags);
+          if (flags & 0x8000) this.pendingWipe = [this.pendingWipe[0], true];
         } catch { /* a picture that will not decode leaves the last one */ }
         return 0;
       }
@@ -2932,6 +3036,34 @@ export class PMachine {
        * A script that is running stays until it is not, which is what
        * the lock count does in the real interpreter.
        */
+      /**
+       * Saving and restoring, which the scripts drive.
+       *
+       * The two answer the opposite way round, and ScummVM is the
+       * authority for that: `kSaveGame` gives back true when it worked
+       * and `kRestoreGame` gives back *nothing* when it worked, true
+       * being the failure.  The slots themselves belong to whoever is
+       * hosting the game -- the page keeps them for the session -- so
+       * they are handed over rather than written here.
+       *
+       * A restore does what a restart does: give up what is running,
+       * build the machine again, put the saved state into it and
+       * re-enter `play`, with `GameIsRestarting` saying restore rather
+       * than restart so `Game::replay` takes it from there.
+       */
+      case 'SaveGame': {
+        const slot = s16(u16(args[1] ?? 0));
+        const name = this.stringAt(args[2] ?? 0, f?.scriptNo);
+        return this.putSave?.(slot, this.snapshot(), name) ? 1 : 0;
+      }
+      case 'RestoreGame': {
+        const slot = s16(u16(args[1] ?? 0));
+        const snap = this.getSave?.(slot) ?? null;
+        if (!snap) return 1;                       // true is the failure
+        this.restoreRequested = snap;
+        this.restartRequested = true;
+        return 0;
+      }
       case 'DisposeScript': {
         const n = u16(a0);
         if (this.frames.some(fr => fr.scriptNo === n)) this.unloadPending.add(n);
