@@ -275,7 +275,8 @@ export class Screen {
    * working around it.
    */
   /** What was on the screen under each cast member, in the order drawn. */
-  private under: Array<{ x0: number; y0: number; w: number; h: number; buf: Uint8Array }> = [];
+  private under: Array<{ x0: number; y0: number; w: number; h: number;
+                        buf: Uint8Array; owner: object | null }> = [];
 
   /**
    * Put the picture back under whatever the cast covered last cycle.
@@ -288,7 +289,7 @@ export class Screen {
    * of it.  Arthur standing beside the parser's message box took the
    * first few letters off it every frame.
    */
-  restoreCastAreas() {
+  restoreCastAreas(keep: (owner: object | null) => boolean = () => true) {
     this.epoch++;
     this.priority.set(this.bgPriority);
     const guarded = this.windows.length > 0;
@@ -307,6 +308,14 @@ export class Screen {
     const owed: typeof this.under = [];
     for (let i = this.under.length - 1; i >= 0; i--) {
       const r = this.under[i];
+      /**
+       * Bits belonging to something that has left the cast are dropped
+       * rather than put back.  There is nothing in the list to redraw
+       * it, so what it painted becomes part of the scene -- which is
+       * how KQ4's "IV" stays on the title after the three pieces fly
+       * in, stop and are let go of.
+       */
+      if (!keep(r.owner)) continue;
       let skipped = false;
       for (let y = 0; y < r.h; y++) {
         const row = (r.y0 + y) * WIDTH;
@@ -321,9 +330,15 @@ export class Screen {
     this.dirty = true;
   }
 
-  /** Keep what is under a cel, before it is drawn over it. */
-  castCovered(x0: number, y0: number, x1: number, y1: number) {
-    this.under.push(this.save(x0, y0, x1, y1));
+  /**
+   * Keep what is under a cel, before it is drawn over it.
+   *
+   * `owner` is given for a stopped view, whose bits are only owed back
+   * while it is still in the cast; an ordinary cel passes null and is
+   * always put back.
+   */
+  castCovered(x0: number, y0: number, x1: number, y1: number, owner: object | null = null) {
+    this.under.push({ ...this.save(x0, y0, x1, y1), owner });
   }
 
   /** Put the picture back over a rectangle now, for scenery coming off. */

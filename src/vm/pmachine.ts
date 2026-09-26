@@ -1647,52 +1647,32 @@ export class PMachine {
    * what puts an actor behind scenery rather than in front of it.
    */
   /**
-   * Where each stopped view was drawn, so it can be taken off again.
+   * Which cycle the cast was last walked, for the animation counters.
    *
-   * Scenery is left out of the ordinary restore, which is what keeps it
-   * when the game drops it from the cast.  Two things put the picture
-   * back.  The game hiding it, which is how the credits make way for
-   * one another -- 35 times in KQ4's intro, 21 of them the credit
-   * views 898 and 899.  And the view moving after all, a script having
-   * set the bit and then gone on changing the thing, which that intro
-   * does 117 times across six views, 109 of them view 755.
-   *
-   * The moving half used to be credited here with Graham's hat, which
-   * was reported flying and standing still at once.  It should not be.
-   * The hat does come through this branch, twice, but taking the
-   * branch out leaves the hat just as single as before: the scene cuts
-   * to the vignette on the cycle it moves, and the new picture covers
-   * the evidence either way.  What the removal does leave standing is
-   * a piece of view 761, 64 pixels at 207,112, in the throne room for
-   * the rest of the scene.  That is what the branch is for.  What
-   * cured the hat is still unaccounted for.
+   * Stopped views used to be tracked here as well, with their own
+   * rectangles and rules about when to put the picture back over them.
+   * They are ordinary members of the cast now: ScummVM saves the bits
+   * under a `noUpdate` cel and restores them every cycle exactly as it
+   * does for an animating one, and the only thing that makes a stopped
+   * view stay on the screen is leaving the cast, where there is nothing
+   * left to put it back.
    */
-  private scenery = new Map<RtObject, {
-    rect: { x0: number; y0: number; x1: number; y1: number };
-    /** What was drawn there, so a change can be noticed. */
-    at: string;
-    /** The last cycle this was in the cast. */
-    seen: number;
-  }>();
   private castEpoch = 0;
 
   /** Everything about a view that decides what lands on the screen. */
-  private sceneryAt(o: RtObject): string {
-    return `${s16(u16(this.prop(o, 'x')))},${s16(u16(this.prop(o, 'y')))},` +
-      `${this.prop(o, 'view')},${this.prop(o, 'loop')},${this.prop(o, 'cel')},` +
-      `${s16(u16(this.prop(o, 'z')))}`;
-  }
 
   private drawCast(castH: number) {
     this.showPendingPic();
     this.castEpoch++;
-    for (const [o, e] of this.scenery) {
-      const gone = (u16(this.prop(o, 'signal')) & 0x0008) !== 0;
-      if (!gone && this.sceneryAt(o) === e.at) continue;   // still where it was
-      this.screen.repaintPicture(e.rect.x0, e.rect.y0, e.rect.x1, e.rect.y1);
-      this.scenery.delete(o);          // redrawn below if it is still about
-    }
-    this.screen.restoreCastAreas();
+    /**
+     * Everything in the cast, drawn or not, and what each will draw.
+     *
+     * Built before anything is put back, because what is put back
+     * depends on who is still here: ScummVM's `update` walks the same
+     * list to restore each stopped view's bits and save them again, so
+     * a view keeps its pixels only once it has left the cast.
+     */
+    const inCast = new Set<RtObject>();
     const drawn: Array<{ o: RtObject; cel: Cel; left: number; top: number;
                         pri: number; y: number; z: number; order: number;
                         scenery: boolean }> = [];
@@ -1700,6 +1680,9 @@ export class PMachine {
     for (const v of this.listValues(castH)) {
       const o = this.resolveTarget(null, v);
       if (!o) continue;
+      // Hidden or not, it is in the cast, and its bits are still owed
+      // back -- that is how one credit makes way for the next.
+      inCast.add(o);
       // signal bit 0x0008 is "hidden"; a view of -1 is nothing to draw.
       if (this.prop(o, 'signal') & 0x0008) continue;
       const cel = this.celOf(o);
@@ -1734,10 +1717,6 @@ export class PMachine {
        * without the hiding half they pile up on one another.
        */
       const scenery = (u16(this.prop(o, 'signal')) & SIGNAL_STOP_UPDATE) !== 0;
-      if (scenery)
-        this.scenery.set(o, {
-          rect: { x0: r.left, y0: r.top, x1: r.left + cel.width, y1: r.top + cel.height },
-          at: this.sceneryAt(o), seen: this.castEpoch });
       drawn.push({ o, cel, left: r.left, top: r.top, pri, scenery,
                    y: s16(u16(this.prop(o, 'y'))), z: s16(u16(this.prop(o, 'z'))),
                    order: order++ });
@@ -1753,15 +1732,13 @@ export class PMachine {
      * was drawn last.  Ties fall back to z, then to the order the game
      * gave them, so two things at the same depth keep their arrangement.
      */
-    // Scenery that is no longer in the cast has become part of the
-    // scene; there is nothing left to take it off, so stop watching it.
-    for (const [o, e] of this.scenery) if (e.seen !== this.castEpoch) this.scenery.delete(o);
+    this.screen.restoreCastAreas(o => o === null || inCast.has(o as RtObject));
     drawn.sort((a, b) => (a.y - b.y) || (a.z - b.z) || (a.order - b.order));
     // Each cel writes its priority as well as testing against it, so a
     // member drawn later cannot paint over one that is nearer the front.
     for (const d of drawn) {
-      if (!d.scenery)
-        this.screen.castCovered(d.left, d.top, d.left + d.cel.width, d.top + d.cel.height);
+      this.screen.castCovered(d.left, d.top, d.left + d.cel.width, d.top + d.cel.height,
+                              d.scenery ? d.o : null);
       this.screen.drawCel(d.cel, d.left, d.top, d.pri, true, true);
     }
     this.animateStats.drawn += drawn.length;
